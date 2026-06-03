@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Import</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; }
+  .geotab-header { background: #0047BB; }
+  .drop-zone { border: 2px dashed #cbd5e1; transition: border-color .2s, background .2s; }
+  .drop-zone.drag-over { border-color: #0047BB; background: #eff6ff; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
+  .dot-ok      { background: #16a34a; }
+  .dot-loading { background: #f59e0b; }
+  .dot-err     { background: #cbd5e1; }
+  .badge-ok   { background:#dcfce7; color:#15803d; }
+  .badge-fail { background:#fee2e2; color:#dc2626; }
+  .badge-warn { background:#fef9c3; color:#92400e; }
+  th { white-space: nowrap; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<!-- Header -->
+<header class="geotab-header text-white px-6 py-3 flex items-center gap-3 shadow-lg">
+  <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/>
+  </svg>
+  <span class="font-semibold text-base">User Import</span>
+  <span id="dbBadge" class="text-blue-300 text-xs bg-blue-900/40 px-2 py-0.5 rounded ml-1">—</span>
+</header>
+
+<div class="max-w-5xl mx-auto px-6 py-6 space-y-5">
+
+  <!-- Step 1 -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+    <div class="flex items-center gap-3 mb-1">
+      <div class="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">1</div>
+      <h2 class="font-semibold text-slate-800">Download Template</h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-5 ml-10">Generates a customer-specific Excel file with dropdown validation lists built from live data in this database.</p>
+
+    <div class="flex flex-wrap gap-5 mb-5 ml-10">
+      <div class="flex items-center gap-2">
+        <span id="dotGroups" class="dot dot-loading"></span>
+        <span id="lblGroups" class="text-xs text-slate-500">Loading groups…</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="dotVehicles" class="dot dot-loading"></span>
+        <span id="lblVehicles" class="text-xs text-slate-500">Loading vehicles…</span>
+      </div>
+    </div>
+
+    <button id="btnDownload" onclick="downloadTemplate()" disabled
+      class="ml-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold
+             hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+      </svg>
+      Download Template
+    </button>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+    <div class="flex items-center gap-3 mb-1">
+      <div class="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">2</div>
+      <h2 class="font-semibold text-slate-800">Upload &amp; Import</h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-5 ml-10">Fill in the template, then drag it back here to preview and create the users.</p>
+
+    <!-- Drop zone -->
+    <div id="dropZone"
+      class="drop-zone ml-10 rounded-xl p-12 text-center cursor-pointer"
+      onclick="document.getElementById('fileInput').click()"
+      ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <svg class="w-8 h-8 mx-auto mb-3 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <p class="text-sm font-medium text-slate-400">Drop your completed template here</p>
+      <p class="text-xs text-slate-300 mt-1">or click to browse &mdash; .xlsx only</p>
+      <input id="fileInput" type="file" accept=".xlsx" class="hidden" onchange="onFileSelected(event)">
+    </div>
+
+    <!-- Preview -->
+    <div id="previewSection" class="hidden mt-6 ml-10">
+      <div class="flex items-center justify-between mb-3">
+        <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest">Preview</p>
+        <div class="flex items-center gap-3">
+          <span id="previewMeta" class="text-xs text-slate-400"></span>
+          <button onclick="clearFile()" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-50 transition-colors">Clear</button>
+        </div>
+      </div>
+
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-50 border-b border-slate-100">
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">#</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">First Name</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Last Name</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Email (Login)</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Is Driver</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Group</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Security Level</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Temp Password</th>
+              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Status</th>
+            </tr>
+          </thead>
+          <tbody id="previewBody"></tbody>
+        </table>
+      </div>
+
+      <div class="mt-4 flex items-center gap-3">
+        <button id="btnImport" onclick="importUsers()" disabled
+          class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold
+                 hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+          </svg>
+          <span id="btnImportLabel">Import</span>
+        </button>
+        <span id="importStatus" class="text-xs text-slate-400"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div id="resultsSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+    <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Import Results</p>
+    <div id="resultsBody"></div>
+  </div>
+
+</div>
+
+<script>
+const SECURITY_LEVELS = [
+  { label: 'Administrator', id: 'GroupAdministratorSecurityId'  },
+  { label: 'Supervisor',    id: 'GroupSupervisorSecurityId'     },
+  { label: 'Full Access',   id: 'GroupEverythingSecurityId'     },
+  { label: 'Default User',  id: 'GroupDefaultUserSecurityId'    },
+  { label: 'View Only',     id: 'GroupViewOnlySecurityId'       },
+  { label: 'No Access',     id: 'GroupNothingSecurityId'        },
+];
+
+let _api     = null;
+let GROUPS   = [];
+let VEHICLES = [];
+let parsedRows = [];
+
+// ── MyGeotab lifecycle ────────────────────────────────────────────────────────
+if (typeof geotab === 'undefined') { var geotab = { addin: {} }; }
+geotab.addin.userImport = function () {
+  return {
+    initialize: function (api, state, callback) {
+      _api = api;
+      if (state && state.database) document.getElementById('dbBadge').textContent = state.database;
+      loadReferenceData();
+      callback();
+    },
+    focus: function (api, state) { _api = api; loadReferenceData(); },
+    blur:  function () {}
+  };
+};
+
+// ── Reference data ────────────────────────────────────────────────────────────
+function loadReferenceData() {
+  if (!_api) return;
+
+  _api.call('Get', { typeName: 'Group', search: {} }, function (groups) {
+    GROUPS = groups
+      .filter(function (g) { return g.name && g.id !== 'GroupCompanyId'; })
+      .map(function (g) { return { id: g.id, name: g.name }; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+    document.getElementById('dotGroups').className = 'dot dot-ok';
+    document.getElementById('lblGroups').textContent = GROUPS.length + ' groups loaded';
+    checkReady();
+  }, function () {
+    document.getElementById('dotGroups').className = 'dot dot-err';
+    document.getElementById('lblGroups').textContent = 'Groups unavailable';
+  });
+
+  _api.call('Get', { typeName: 'Device', search: {} }, function (devices) {
+    VEHICLES = devices
+      .filter(function (d) { return d.id && d.id !== 'b0'; })
+      .map(function (d) { return { id: d.id, name: d.name || d.id, reg: (d.licensePlate || '').trim() }; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+    document.getElementById('dotVehicles').className = 'dot dot-ok';
+    document.getElementById('lblVehicles').textContent = VEHICLES.length + ' vehicles loaded';
+    checkReady();
+  }, function () {
+    document.getElementById('dotVehicles').className = 'dot dot-err';
+    document.getElementById('lblVehicles').textContent = 'Vehicles unavailable';
+  });
+}
+
+function checkReady() {
+  if (GROUPS.length > 0 || VEHICLES.length > 0) {
+    document.getElementById('btnDownload').disabled = false;
+  }
+}
+
+// ── Generate template ─────────────────────────────────────────────────────────
+function downloadTemplate() {
+  var wb = XLSX.utils.book_new();
+
+  // ── Template sheet ──
+  var headers = [
+    'First Name', 'Last Name', 'Email (Login)',
+    'Temporary Password', 'Is Driver', 'Group', 'Security Level'
+  ];
+  var ws = XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols'] = [
+    { wch: 16 }, { wch: 16 }, { wch: 30 },
+    { wch: 22 }, { wch: 12 }, { wch: 28 }, { wch: 18 }
+  ];
+
+  var groupNames = GROUPS.map(function (g) { return g.name; });
+  var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
+
+  ws['!dataValidations'] = [];
+
+  // Group dropdown → references _ref sheet so Excel handles long lists correctly
+  if (groupNames.length > 0) {
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: 'F2:F500',
+      formula1: '_ref!$A$2:$A$' + (groupNames.length + 1),
+      showDropDown: false,
+      error: 'Select a group from the list.',
+      errorTitle: 'Invalid Group',
+      showErrorMessage: true
+    });
+  }
+
+  // Security level — small enough to inline
+  ws['!dataValidations'].push({
+    type: 'list',
+    sqref: 'G2:G500',
+    formula1: '"' + secLabels.join(',') + '"',
+    showDropDown: false,
+    error: 'Select a security level from the list.',
+    errorTitle: 'Invalid Security Level',
+    showErrorMessage: true
+  });
+
+  // Is Driver
+  ws['!dataValidations'].push({
+    type: 'list',
+    sqref: 'E2:E500',
+    formula1: '"Yes,No"',
+    showDropDown: false
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+  // ── Reference sheet (hidden) ──
+  var refRows = [['Groups', 'Security Levels']];
+  var maxLen  = Math.max(groupNames.length, secLabels.length);
+  for (var i = 0; i < maxLen; i++) {
+    refRows.push([groupNames[i] || '', secLabels[i] || '']);
+  }
+  var wsRef = XLSX.utils.aoa_to_sheet(refRows);
+  wsRef['!cols'] = [{ wch: 30 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, wsRef, '_ref');
+
+  // Hide _ref
+  if (!wb.Workbook) wb.Workbook = {};
+  if (!wb.Workbook.Sheets) wb.Workbook.Sheets = [];
+  while (wb.Workbook.Sheets.length < wb.SheetNames.length) wb.Workbook.Sheets.push({});
+  var refIdx = wb.SheetNames.indexOf('_ref');
+  if (refIdx >= 0) wb.Workbook.Sheets[refIdx].Hidden = 1;
+
+  var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
+  XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_UserImport_Template.xlsx');
+}
+
+// ── Drag & drop ───────────────────────────────────────────────────────────────
+function onDragOver(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.add('drag-over');
+}
+function onDragLeave() {
+  document.getElementById('dropZone').classList.remove('drag-over');
+}
+function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  var file = e.dataTransfer.files[0];
+  if (file) processFile(file);
+}
+function onFileSelected(e) {
+  var file = e.target.files[0];
+  if (file) processFile(file);
+}
+
+// ── Parse ─────────────────────────────────────────────────────────────────────
+function processFile(file) {
+  var reader = new FileReader();
+  reader.onload = function (e) {
+    var wb = XLSX.read(e.target.result, { type: 'array' });
+    var ws = wb.Sheets['Template'];
+    if (!ws) {
+      alert('Sheet "Template" not found. Make sure you\'re uploading the file from Step 1.');
+      return;
+    }
+    var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    parseRows(rows);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function parseRows(rows) {
+  parsedRows = rows
+    .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
+    .map(function (r, i) {
+      var firstName = (r['First Name']         || '').toString().trim();
+      var lastName  = (r['Last Name']          || '').toString().trim();
+      var email     = (r['Email (Login)']      || '').toString().trim();
+      var password  = (r['Temporary Password'] || '').toString().trim();
+      var isDriver  = (r['Is Driver']          || 'No').toString().trim().toLowerCase() === 'yes';
+      var groupName = (r['Group']              || '').toString().trim();
+      var secLabel  = (r['Security Level']     || 'Default User').toString().trim();
+
+      var errors = [];
+      if (!firstName)           errors.push('First name required');
+      if (!lastName)            errors.push('Last name required');
+      if (!email.includes('@')) errors.push('Invalid email');
+
+      var matchedGroup = groupName ? GROUPS.find(function (g) { return g.name === groupName; }) : null;
+      if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
+
+      var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
+                    || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
+
+      // Auto-generate password if blank
+      var finalPassword = password || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
+      var passwordGenerated = !password;
+
+      return {
+        rowNum: i + 2,
+        firstName, lastName, email,
+        password: finalPassword, passwordGenerated,
+        isDriver,
+        groupName, groupId: matchedGroup ? matchedGroup.id : null,
+        secLabel: matchedSec.label, secId: matchedSec.id,
+        errors,
+        status: 'pending', apiError: ''
+      };
+    });
+
+  renderPreview();
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────────
+function renderPreview() {
+  var validCount   = parsedRows.filter(function (r) { return r.errors.length === 0; }).length;
+  var invalidCount = parsedRows.length - validCount;
+
+  document.getElementById('previewSection').classList.remove('hidden');
+  document.getElementById('previewMeta').textContent =
+    parsedRows.length + ' rows · ' + validCount + ' valid' +
+    (invalidCount > 0 ? ' · ' + invalidCount + ' with errors' : '');
+
+  var tbody = document.getElementById('previewBody');
+  tbody.innerHTML = parsedRows.map(function (r) {
+    var statusHtml;
+    if (r.status === 'done') {
+      statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">✓ Created</span>';
+    } else if (r.status === 'error') {
+      statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">✕ Failed</span>';
+    } else if (r.errors.length > 0) {
+      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">⚠ ' + esc(r.errors[0]) + '</span>';
+    } else {
+      statusHtml = '<span class="text-xs text-slate-300">Ready</span>';
+    }
+
+    var pwDisplay = r.status === 'done' || r.status === 'pending'
+      ? (r.passwordGenerated
+          ? '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>'
+          : '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>')
+      : '—';
+
+    return '<tr class="border-b border-slate-100 ' + (r.errors.length > 0 ? 'bg-red-50/30' : '') + '">' +
+      '<td class="px-4 py-3 text-xs text-slate-400">' + r.rowNum + '</td>' +
+      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.firstName) + '</td>' +
+      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.lastName)  + '</td>' +
+      '<td class="px-4 py-3 text-sm text-slate-600">' + esc(r.email)     + '</td>' +
+      '<td class="px-4 py-3 text-xs text-slate-500">' + (r.isDriver ? 'Yes' : 'No') + '</td>' +
+      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.groupName || '—') + '</td>' +
+      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.secLabel) + '</td>' +
+      '<td class="px-4 py-3">' + pwDisplay + '</td>' +
+      '<td class="px-4 py-3">' + statusHtml + '</td>' +
+      '</tr>';
+  }).join('');
+
+  var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
+  var btn = document.getElementById('btnImport');
+  btn.disabled = importable === 0;
+  document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+}
+
+function clearFile() {
+  parsedRows = [];
+  document.getElementById('previewSection').classList.add('hidden');
+  document.getElementById('resultsSection').classList.add('hidden');
+  document.getElementById('fileInput').value = '';
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Import ────────────────────────────────────────────────────────────────────
+function importUsers() {
+  if (!_api) { alert('Not connected to MyGeotab.'); return; }
+
+  var toImport = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; });
+  if (toImport.length === 0) return;
+
+  document.getElementById('btnImport').disabled = true;
+  document.getElementById('importStatus').textContent = 'Importing ' + toImport.length + ' users…';
+
+  var completed = 0;
+  var BATCH = 50;
+
+  function nextBatch(offset) {
+    var chunk = toImport.slice(offset, offset + BATCH);
+    if (chunk.length === 0) { finish(); return; }
+
+    var calls = chunk.map(function (r) {
+      var entity = {
+        name:           r.email,
+        firstName:      r.firstName,
+        lastName:       r.lastName,
+        password:       r.password,
+        isDriver:       r.isDriver,
+        changePassword: true,
+        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
+        securityGroups: [{ id: r.secId }]
+      };
+      return ['Add', { typeName: 'User', entity: entity }];
+    });
+
+    _api.multiCall(calls, function (responses) {
+      chunk.forEach(function (r, i) {
+        var res = responses[i];
+        if (res && typeof res === 'object' && res.error) {
+          r.status   = 'error';
+          r.apiError = res.error.message || JSON.stringify(res.error);
+        } else {
+          r.status = 'done';
+        }
+        completed++;
+      });
+      document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
+      renderPreview();
+      nextBatch(offset + BATCH);
+    }, function (err) {
+      // Whole batch failed — fall back to individual calls so we get per-row results
+      individualFallback(chunk, function () {
+        completed += chunk.length;
+        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
+        renderPreview();
+        nextBatch(offset + BATCH);
+      });
+    });
+  }
+
+  function individualFallback(chunk, done) {
+    var idx = 0;
+    function next() {
+      if (idx >= chunk.length) { done(); return; }
+      var r = chunk[idx++];
+      var entity = {
+        name:           r.email,
+        firstName:      r.firstName,
+        lastName:       r.lastName,
+        password:       r.password,
+        isDriver:       r.isDriver,
+        changePassword: true,
+        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
+        securityGroups: [{ id: r.secId }]
+      };
+      _api.call('Add', { typeName: 'User', entity: entity }, function () {
+        r.status = 'done';
+        next();
+      }, function (err) {
+        r.status   = 'error';
+        r.apiError = typeof err === 'string' ? err : (err && err.message) || 'Unknown error';
+        next();
+      });
+    }
+    next();
+  }
+
+  function finish() {
+    var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
+    var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
+
+    document.getElementById('importStatus').textContent = '';
+
+    var remaining = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
+    var btn = document.getElementById('btnImport');
+    btn.disabled = remaining === 0;
+    document.getElementById('btnImportLabel').textContent = remaining > 0
+      ? 'Import ' + remaining + ' More'
+      : 'All imported';
+
+    var section = document.getElementById('resultsSection');
+    section.classList.remove('hidden');
+    document.getElementById('resultsBody').innerHTML =
+      '<div class="flex items-center gap-4">' +
+        '<div class="text-center px-6 py-4 rounded-xl bg-green-50 border border-green-100">' +
+          '<p class="text-3xl font-bold text-green-600">' + done + '</p>' +
+          '<p class="text-xs text-green-500 mt-0.5 font-medium">Created</p>' +
+        '</div>' +
+        (failed > 0
+          ? '<div class="text-center px-6 py-4 rounded-xl bg-red-50 border border-red-100">' +
+              '<p class="text-3xl font-bold text-red-500">' + failed + '</p>' +
+              '<p class="text-xs text-red-400 mt-0.5 font-medium">Failed</p>' +
+            '</div>'
+          : '') +
+        '<p class="text-sm text-slate-400 ml-2">' +
+          (failed > 0
+            ? 'Failed rows are highlighted in the preview. Check error tooltips for details.'
+            : 'All users created successfully. They will be prompted to change their password on first login.') +
+        '</p>' +
+      '</div>';
+  }
+
+  nextBatch(0);
+}
+</script>
+</body>
+</html>

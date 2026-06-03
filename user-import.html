@@ -431,6 +431,8 @@ function importUsers() {
     if (chunk.length === 0) { finish(); return; }
 
     var calls = chunk.map(function (r) {
+      var groups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
+      groups.push({ id: r.secId });
       var entity = {
         name:           r.email,
         firstName:      r.firstName,
@@ -438,8 +440,7 @@ function importUsers() {
         password:       r.password,
         isDriver:       r.isDriver,
         changePassword: true,
-        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups: [{ id: r.secId }]
+        groups:         groups
       };
       return ['Add', { typeName: 'User', entity: entity }];
     });
@@ -474,6 +475,8 @@ function importUsers() {
     function next() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
+      var groups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
+      groups.push({ id: r.secId });
       var entity = {
         name:           r.email,
         firstName:      r.firstName,
@@ -481,8 +484,7 @@ function importUsers() {
         password:       r.password,
         isDriver:       r.isDriver,
         changePassword: true,
-        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups: [{ id: r.secId }]
+        groups:         groups
       };
       _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';

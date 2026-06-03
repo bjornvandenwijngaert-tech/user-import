@@ -40,9 +40,10 @@
       <div class="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">1</div>
       <h2 class="font-semibold text-slate-800">Download Template</h2>
     </div>
-    <p class="text-sm text-slate-400 mb-5 ml-10">Generates a customer-specific Excel file with dropdown validation lists built from live data in this database.</p>
+    <p class="text-sm text-slate-400 mb-5 ml-10">Configure and download a template tailored to exactly what you need.</p>
 
-    <div class="flex flex-wrap gap-5 mb-5 ml-10">
+    <!-- Loading indicators -->
+    <div class="flex flex-wrap gap-5 mb-6 ml-10">
       <div class="flex items-center gap-2">
         <span id="dotGroups" class="dot dot-loading"></span>
         <span id="lblGroups" class="text-xs text-slate-500">Loading groups…</span>
@@ -53,14 +54,80 @@
       </div>
     </div>
 
-    <button id="btnDownload" onclick="downloadTemplate()" disabled
-      class="ml-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold
-             hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-      </svg>
-      Download Template
-    </button>
+    <!-- Phase 1: User Type -->
+    <div id="phaseType" class="ml-10 opacity-40 pointer-events-none transition-opacity duration-200">
+      <p class="text-sm font-medium text-slate-700 mb-3">What are you importing?</p>
+      <div class="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 gap-1">
+        <button onclick="selectUserType('users')" id="typeBtn-users"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Users
+        </button>
+        <button onclick="selectUserType('both')" id="typeBtn-both"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Both
+        </button>
+        <button onclick="selectUserType('drivers')" id="typeBtn-drivers"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Drivers
+        </button>
+      </div>
+    </div>
+
+    <!-- Phase 2: Field Selection -->
+    <div id="phaseFields" class="hidden ml-10 mt-6">
+      <p class="text-sm font-medium text-slate-700 mb-4">Which columns do you need?</p>
+
+      <!-- Mandatory (always included) -->
+      <div class="space-y-2.5">
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">First Name</span>
+          <span class="text-xs text-slate-400">required</span>
+        </label>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Last Name</span>
+          <span class="text-xs text-slate-400">required</span>
+        </label>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Username (Email)</span>
+          <span class="text-xs text-slate-400">required</span>
+        </label>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Security Level</span>
+          <span class="text-xs text-slate-400">required</span>
+        </label>
+      </div>
+
+      <div class="border-t border-slate-100 my-4"></div>
+
+      <!-- Optional (user configures) -->
+      <div id="optionalFieldsList" class="space-y-2.5 mb-6"></div>
+
+      <button onclick="confirmFields()"
+        class="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+        Done
+      </button>
+    </div>
+
+    <!-- Phase 3: Download -->
+    <div id="phaseDownload" class="hidden ml-10 mt-5">
+      <p class="text-xs text-slate-400 mb-4" id="configSummary"></p>
+      <div class="flex items-center gap-3">
+        <button onclick="downloadTemplate()"
+          class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          Download Template
+        </button>
+        <button onclick="resetWizard()" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-50 transition-colors">
+          Change settings
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Step 2 -->
@@ -97,17 +164,7 @@
       <div class="overflow-x-auto rounded-xl border border-slate-200">
         <table class="w-full text-sm">
           <thead>
-            <tr class="bg-slate-50 border-b border-slate-100">
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">#</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">First Name</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Last Name</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Email (Login)</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Is Driver</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Group</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Security Level</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Temp Password</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Status</th>
-            </tr>
+            <tr id="previewHead" class="bg-slate-50 border-b border-slate-100"></tr>
           </thead>
           <tbody id="previewBody"></tbody>
         </table>
@@ -137,7 +194,7 @@
 
 <script>
 const SECURITY_LEVELS = [
-  { label: 'Full Access',    id: 'GroupEverythingSecurityId' },
+  { label: 'Administrator',  id: 'GroupEverythingSecurityId' },
   { label: 'Supervisor',     id: 'GroupSupervisorSecurityId' },
   { label: 'Default User',   id: 'GroupUserSecurityId'       },
   { label: 'Drive App User', id: 'GroupDriveUserSecurityId'  },
@@ -145,10 +202,22 @@ const SECURITY_LEVELS = [
   { label: 'No Access',      id: 'GroupNothingSecurityId'    },
 ];
 
-let _api       = null;
-let GROUPS     = [];
-let VEHICLES   = [];
-let parsedRows = [];
+// Optional column definitions — order here = column order in the template
+const OPTIONAL_FIELDS = [
+  { key: 'isDriver',   label: 'Is Driver',         header: 'Is Driver',          defaultOn: true,  onlyBoth: true },
+  { key: 'group',      label: 'Group',             header: 'Group',              defaultOn: true  },
+  { key: 'password',   label: 'Temporary Password', header: 'Temporary Password', defaultOn: true  },
+  { key: 'employeeNo', label: 'Employee Number',   header: 'Employee Number',    defaultOn: false },
+  { key: 'phone',      label: 'Phone Number',      header: 'Phone Number',       defaultOn: false },
+  { key: 'comment',    label: 'Comment / Notes',   header: 'Comment',            defaultOn: false },
+];
+
+let _api           = null;
+let GROUPS         = [];
+let VEHICLES       = [];
+let parsedRows     = [];
+let templateConfig = { userType: null, selectedFields: [] };
+let _refLoadCount  = 0; // counts completed API calls (success or fail) to unlock wizard
 
 // ── MyGeotab lifecycle ────────────────────────────────────────────────────────
 if (typeof geotab === 'undefined') { var geotab = { addin: {} }; }
@@ -170,7 +239,6 @@ function loadReferenceData() {
   if (!_api) return;
 
   _api.call('Get', { typeName: 'Group', search: {} }, function (groups) {
-    // Build parent map from both parent references and children arrays
     var parentMap = {};
     groups.forEach(function (g) {
       if (g.parent && g.parent.id) parentMap[g.id] = g.parent.id;
@@ -204,6 +272,7 @@ function loadReferenceData() {
   }, function () {
     document.getElementById('dotGroups').className = 'dot dot-err';
     document.getElementById('lblGroups').textContent = 'Groups unavailable';
+    checkReady();
   });
 
   _api.call('Get', { typeName: 'Device', search: {} }, function (devices) {
@@ -217,40 +286,144 @@ function loadReferenceData() {
   }, function () {
     document.getElementById('dotVehicles').className = 'dot dot-err';
     document.getElementById('lblVehicles').textContent = 'Vehicles unavailable';
+    checkReady();
   });
 }
 
 function checkReady() {
-  if (GROUPS.length > 0 || VEHICLES.length > 0) {
-    document.getElementById('btnDownload').disabled = false;
+  _refLoadCount++;
+  if (_refLoadCount >= 2) {
+    // Both API calls done — unlock the wizard regardless of success/failure
+    var phase = document.getElementById('phaseType');
+    phase.classList.remove('opacity-40', 'pointer-events-none');
   }
+}
+
+// ── Wizard ────────────────────────────────────────────────────────────────────
+function selectUserType(type) {
+  templateConfig.userType = type;
+
+  ['users', 'both', 'drivers'].forEach(function (t) {
+    var btn = document.getElementById('typeBtn-' + t);
+    btn.className = t === type
+      ? 'px-5 py-2 rounded-lg text-sm font-medium transition-all bg-blue-600 text-white shadow-sm'
+      : 'px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700';
+  });
+
+  // Render optional field checkboxes, filtering out isDriver when not "Both"
+  var container = document.getElementById('optionalFieldsList');
+  container.innerHTML = OPTIONAL_FIELDS
+    .filter(function (f) { return !f.onlyBoth || type === 'both'; })
+    .map(function (f) {
+      return '<label class="flex items-center gap-3 cursor-pointer select-none">' +
+        '<input type="checkbox" id="field-' + f.key + '"' + (f.defaultOn ? ' checked' : '') +
+        ' class="w-4 h-4 accent-blue-600">' +
+        '<span class="text-sm text-slate-700">' + f.label + '</span>' +
+        '</label>';
+    }).join('');
+
+  document.getElementById('phaseFields').classList.remove('hidden');
+}
+
+function confirmFields() {
+  templateConfig.selectedFields = OPTIONAL_FIELDS
+    .filter(function (f) {
+      if (f.onlyBoth && templateConfig.userType !== 'both') return false;
+      var el = document.getElementById('field-' + f.key);
+      return el && el.checked;
+    })
+    .map(function (f) { return f.key; });
+
+  var typeLabel = { users: 'Users only', drivers: 'Drivers only', both: 'Users &amp; Drivers' }[templateConfig.userType];
+  var optLabels = OPTIONAL_FIELDS
+    .filter(function (f) { return templateConfig.selectedFields.indexOf(f.key) !== -1; })
+    .map(function (f) { return f.label; });
+
+  document.getElementById('configSummary').innerHTML =
+    '<strong>' + typeLabel + '</strong> &nbsp;&middot;&nbsp; ' +
+    'First Name, Last Name, Email, Security Level' +
+    (optLabels.length ? ', ' + optLabels.join(', ') : '');
+
+  document.getElementById('phaseFields').classList.add('hidden');
+  document.getElementById('phaseDownload').classList.remove('hidden');
+}
+
+function resetWizard() {
+  document.getElementById('phaseDownload').classList.add('hidden');
+  document.getElementById('phaseFields').classList.remove('hidden');
+}
+
+// ── Column letter helper (0-indexed → "A", "B", … "AA", …) ───────────────────
+function colLetter(idx) {
+  var result = '', i = idx + 1;
+  while (i > 0) {
+    var rem = (i - 1) % 26;
+    result = String.fromCharCode(65 + rem) + result;
+    i = Math.floor((i - 1) / 26);
+  }
+  return result;
 }
 
 // ── Generate template ─────────────────────────────────────────────────────────
 function downloadTemplate() {
+  var sf      = templateConfig.selectedFields;
+  var hasDrv  = sf.indexOf('isDriver')   !== -1;
+  var hasGrp  = sf.indexOf('group')      !== -1;
+  var hasPwd  = sf.indexOf('password')   !== -1;
+  var hasEmp  = sf.indexOf('employeeNo') !== -1;
+  var hasPhn  = sf.indexOf('phone')      !== -1;
+  var hasCmt  = sf.indexOf('comment')    !== -1;
+
+  // Mandatory columns first, then optional in definition order
+  var headers = ['First Name', 'Last Name', 'Email (Login)', 'Security Level'];
+  if (hasDrv) headers.push('Is Driver');
+  if (hasGrp) headers.push('Group');
+  if (hasPwd) headers.push('Temporary Password');
+  if (hasEmp) headers.push('Employee Number');
+  if (hasPhn) headers.push('Phone Number');
+  if (hasCmt) headers.push('Comment');
+
+  var colWidths = headers.map(function (h) { return { wch: Math.max(h.length + 4, 14) }; });
+  colWidths[2].wch = 34; // email needs more room
+
   var wb = XLSX.utils.book_new();
-
-  // ── Template sheet ──
-  var headers = [
-    'First Name', 'Last Name', 'Email (Login)',
-    'Temporary Password', 'Is Driver', 'Group', 'Security Level'
-  ];
   var ws = XLSX.utils.aoa_to_sheet([headers]);
-  ws['!cols'] = [
-    { wch: 16 }, { wch: 16 }, { wch: 30 },
-    { wch: 22 }, { wch: 12 }, { wch: 28 }, { wch: 18 }
-  ];
-
-  var groupNames = GROUPS.map(function (g) { return g.name; });
-  var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
-
+  ws['!cols'] = colWidths;
   ws['!dataValidations'] = [];
 
-  // Group dropdown → references _ref sheet so Excel handles long lists correctly
-  if (groupNames.length > 0) {
+  var secIdx    = headers.indexOf('Security Level');
+  var driverIdx = headers.indexOf('Is Driver');
+  var groupIdx  = headers.indexOf('Group');
+
+  var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
+  var groupNames = GROUPS.map(function (g) { return g.name; });
+
+  // Security level dropdown (always present)
+  ws['!dataValidations'].push({
+    type: 'list',
+    sqref: colLetter(secIdx) + '2:' + colLetter(secIdx) + '500',
+    formula1: '"' + secLabels.join(',') + '"',
+    showDropDown: false,
+    error: 'Select a security level from the list.',
+    errorTitle: 'Invalid Security Level',
+    showErrorMessage: true
+  });
+
+  // Is Driver dropdown
+  if (hasDrv) {
     ws['!dataValidations'].push({
       type: 'list',
-      sqref: 'F2:F500',
+      sqref: colLetter(driverIdx) + '2:' + colLetter(driverIdx) + '500',
+      formula1: '"Yes,No"',
+      showDropDown: false
+    });
+  }
+
+  // Group dropdown — references _ref sheet so Excel handles long lists
+  if (hasGrp && groupNames.length > 0) {
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: colLetter(groupIdx) + '2:' + colLetter(groupIdx) + '500',
       formula1: '_ref!$A$2:$A$' + (groupNames.length + 1),
       showDropDown: false,
       error: 'Select a group from the list.',
@@ -259,28 +432,9 @@ function downloadTemplate() {
     });
   }
 
-  // Security level — small enough to inline
-  ws['!dataValidations'].push({
-    type: 'list',
-    sqref: 'G2:G500',
-    formula1: '"' + secLabels.join(',') + '"',
-    showDropDown: false,
-    error: 'Select a security level from the list.',
-    errorTitle: 'Invalid Security Level',
-    showErrorMessage: true
-  });
-
-  // Is Driver
-  ws['!dataValidations'].push({
-    type: 'list',
-    sqref: 'E2:E500',
-    formula1: '"Yes,No"',
-    showDropDown: false
-  });
-
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
 
-  // ── Reference sheet (visible) ──
+  // Reference sheet with valid values for dropdown sources
   var refRows = [['Valid Groups', 'Valid Security Levels']];
   var maxLen  = Math.max(groupNames.length, secLabels.length);
   for (var i = 0; i < maxLen; i++) {
@@ -323,23 +477,39 @@ function processFile(file) {
       alert('Sheet "Template" not found. Make sure you\'re uploading the file from Step 1.');
       return;
     }
-    var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    parseRows(rows);
+    parseRows(XLSX.utils.sheet_to_json(ws, { defval: '' }));
   };
   reader.readAsArrayBuffer(file);
 }
 
 function parseRows(rows) {
+  // Detect which optional columns are present in the uploaded file
+  var sample = rows[0] || {};
+  var hasDrv = 'Is Driver'          in sample;
+  var hasGrp = 'Group'              in sample;
+  var hasPwd = 'Temporary Password' in sample;
+  var hasEmp = 'Employee Number'    in sample;
+  var hasPhn = 'Phone Number'       in sample;
+  var hasCmt = 'Comment'            in sample;
+
   parsedRows = rows
     .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
     .map(function (r, i) {
-      var firstName = (r['First Name']         || '').toString().trim();
-      var lastName  = (r['Last Name']          || '').toString().trim();
-      var email     = (r['Email (Login)']      || '').toString().trim();
-      var password  = (r['Temporary Password'] || '').toString().trim();
-      var isDriver  = (r['Is Driver']          || 'No').toString().trim().toLowerCase() === 'yes';
-      var groupName = (r['Group']              || '').toString().trim();
+      var firstName = (r['First Name']    || '').toString().trim();
+      var lastName  = (r['Last Name']     || '').toString().trim();
+      var email     = (r['Email (Login)'] || '').toString().trim();
       var secLabel  = (r['Security Level'] || 'Default User').toString().trim();
+
+      // isDriver: use column if present, otherwise fall back to the wizard's type selection
+      var isDriver = hasDrv
+        ? (r['Is Driver'] || 'No').toString().trim().toLowerCase() === 'yes'
+        : templateConfig.userType === 'drivers';
+
+      var rawPwd     = hasPwd ? (r['Temporary Password'] || '').toString().trim() : '';
+      var groupName  = hasGrp ? (r['Group']              || '').toString().trim() : '';
+      var employeeNo = hasEmp ? (r['Employee Number']    || '').toString().trim() : '';
+      var phoneNumber= hasPhn ? (r['Phone Number']       || '').toString().trim() : '';
+      var comment    = hasCmt ? (r['Comment']            || '').toString().trim() : '';
 
       var errors = [];
       if (!firstName)           errors.push('First name required');
@@ -352,9 +522,8 @@ function parseRows(rows) {
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
                     || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
 
-      // Auto-generate password if blank
-      var finalPassword = password || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
-      var passwordGenerated = !password;
+      var finalPassword     = rawPwd || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
+      var passwordGenerated = !rawPwd;
 
       return {
         rowNum: i + 2,
@@ -363,6 +532,9 @@ function parseRows(rows) {
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
         secLabel: matchedSec.label, secId: matchedSec.id,
+        employeeNo, phoneNumber, comment,
+        // column presence flags carried per-row so renderPreview knows what to show
+        hasDrv, hasGrp, hasPwd, hasEmp, hasPhn, hasCmt,
         errors,
         status: 'pending', apiError: ''
       };
@@ -373,6 +545,9 @@ function parseRows(rows) {
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 function renderPreview() {
+  if (parsedRows.length === 0) return;
+
+  var f = parsedRows[0]; // use first row's flags for header/cell layout
   var validCount   = parsedRows.filter(function (r) { return r.errors.length === 0; }).length;
   var invalidCount = parsedRows.length - validCount;
 
@@ -381,36 +556,60 @@ function renderPreview() {
     parsedRows.length + ' rows · ' + validCount + ' valid' +
     (invalidCount > 0 ? ' · ' + invalidCount + ' with errors' : '');
 
-  var tbody = document.getElementById('previewBody');
-  tbody.innerHTML = parsedRows.map(function (r) {
+  // Build dynamic header row
+  var thC = 'px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest';
+  var headCols = ['#', 'First Name', 'Last Name', 'Email (Login)'];
+  if (f.hasDrv) headCols.push('Is Driver');
+  if (f.hasGrp) headCols.push('Group');
+  headCols.push('Security Level', 'Password');
+  if (f.hasEmp) headCols.push('Emp #');
+  if (f.hasPhn) headCols.push('Phone');
+  if (f.hasCmt) headCols.push('Comment');
+  headCols.push('Status');
+
+  document.getElementById('previewHead').innerHTML =
+    headCols.map(function (h) { return '<th class="' + thC + '">' + h + '</th>'; }).join('');
+
+  // Helpers for consistent cell markup
+  var tdN = function (v)       { return '<td class="px-4 py-3 text-xs text-slate-400">'    + v + '</td>'; };
+  var tdM = function (v)       { return '<td class="px-4 py-3 text-sm text-slate-700">'    + esc(v) + '</td>'; };
+  var tdE = function (v)       { return '<td class="px-4 py-3 text-sm text-slate-600">'    + esc(v) + '</td>'; };
+  var tdS = function (v)       { return '<td class="px-4 py-3 text-xs text-slate-500">'    + esc(v) + '</td>'; };
+  var tdR = function (v)       { return '<td class="px-4 py-3">'                           + v + '</td>'; };
+
+  document.getElementById('previewBody').innerHTML = parsedRows.map(function (r) {
     var statusHtml;
     if (r.status === 'done') {
-      statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">✓ Created</span>';
+      statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">&#x2713; Created</span>';
     } else if (r.status === 'error') {
-      statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">✕ Failed</span>';
+      statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">&#x2715; Failed</span>';
     } else if (r.errors.length > 0) {
-      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">⚠ ' + esc(r.errors[0]) + '</span>';
+      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">&#x26A0; ' + esc(r.errors[0]) + '</span>';
     } else {
       statusHtml = '<span class="text-xs text-slate-300">Ready</span>';
     }
 
-    var pwDisplay = r.status === 'done' || r.status === 'pending'
-      ? (r.passwordGenerated
-          ? '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>'
-          : '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>')
-      : '—';
+    var pwDisplay = r.passwordGenerated
+      ? '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>'
+      : '<span class="text-xs text-slate-500 font-mono">'  + esc(r.password) + '</span>';
 
-    return '<tr class="border-b border-slate-100 ' + (r.errors.length > 0 ? 'bg-red-50/30' : '') + '">' +
-      '<td class="px-4 py-3 text-xs text-slate-400">' + r.rowNum + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.firstName) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.lastName)  + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-600">' + esc(r.email)     + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + (r.isDriver ? 'Yes' : 'No') + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.groupName || '—') + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.secLabel) + '</td>' +
-      '<td class="px-4 py-3">' + pwDisplay + '</td>' +
-      '<td class="px-4 py-3">' + statusHtml + '</td>' +
-      '</tr>';
+    var cells = [
+      tdN(r.rowNum),
+      tdM(r.firstName),
+      tdM(r.lastName),
+      tdE(r.email),
+    ];
+    if (r.hasDrv) cells.push(tdS(r.isDriver ? 'Yes' : 'No'));
+    if (r.hasGrp) cells.push(tdS(r.groupName || '—'));
+    cells.push(tdS(r.secLabel));
+    cells.push(tdR(pwDisplay));
+    if (r.hasEmp) cells.push(tdS(r.employeeNo  || '—'));
+    if (r.hasPhn) cells.push(tdS(r.phoneNumber || '—'));
+    if (r.hasCmt) cells.push(tdS(r.comment     || '—'));
+    cells.push(tdR(statusHtml));
+
+    return '<tr class="border-b border-slate-100' + (r.errors.length > 0 ? ' bg-red-50/30' : '') + '">' +
+      cells.join('') + '</tr>';
   }).join('');
 
   var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
@@ -428,6 +627,29 @@ function clearFile() {
 
 function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── Entity builder ────────────────────────────────────────────────────────────
+function buildEntity(r) {
+  var entity = {
+    name:                      r.email,
+    firstName:                 r.firstName,
+    lastName:                  r.lastName,
+    password:                  r.password,
+    isDriver:                  r.isDriver,
+    changePassword:            true,
+    userAuthenticationType:    'BasicAuthentication',
+    companyGroups:             r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
+    securityGroups:            [{ id: r.secId }],
+    isMetric:                  false,
+    fuelEconomyUnit:           'MPGImperial',
+    electricEnergyEconomyUnit: 'MPGEImperial'
+  };
+  // Only include optional fields when the row actually has a value — blank = omit entirely
+  if (r.employeeNo)  entity.employeeNo  = r.employeeNo;
+  if (r.phoneNumber) entity.phoneNumber = r.phoneNumber;
+  if (r.comment)     entity.comment     = r.comment;
+  return entity;
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
@@ -448,18 +670,7 @@ function importUsers() {
     if (chunk.length === 0) { finish(); return; }
 
     var calls = chunk.map(function (r) {
-      var entity = {
-        name:                   r.email,
-        firstName:              r.firstName,
-        lastName:               r.lastName,
-        password:               r.password,
-        isDriver:               r.isDriver,
-        changePassword:         true,
-        userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
-      };
-      return ['Add', { typeName: 'User', entity: entity }];
+      return ['Add', { typeName: 'User', entity: buildEntity(r) }];
     });
 
     _api.multiCall(calls, function (responses) {
@@ -476,8 +687,8 @@ function importUsers() {
       document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
       renderPreview();
       nextBatch(offset + BATCH);
-    }, function (err) {
-      // Whole batch failed — fall back to individual calls so we get per-row results
+    }, function () {
+      // Whole batch rejected — fall back to individual calls for per-row error detail
       individualFallback(chunk, function () {
         completed += chunk.length;
         document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
@@ -492,17 +703,7 @@ function importUsers() {
     function next() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
-      var entity = {
-        name:                   r.email,
-        firstName:              r.firstName,
-        lastName:               r.lastName,
-        password:               r.password,
-        isDriver:               r.isDriver,
-        changePassword:         true,
-        userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
-      };
+      var entity = buildEntity(r);
       _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';
         next();
@@ -529,8 +730,7 @@ function importUsers() {
       ? 'Import ' + remaining + ' More'
       : 'All imported';
 
-    var section = document.getElementById('resultsSection');
-    section.classList.remove('hidden');
+    document.getElementById('resultsSection').classList.remove('hidden');
     document.getElementById('resultsBody').innerHTML =
       '<div class="flex items-center gap-4">' +
         '<div class="text-center px-6 py-4 rounded-xl bg-green-50 border border-green-100">' +

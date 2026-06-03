@@ -432,12 +432,8 @@ function importUsers() {
 
     var calls = chunk.map(function (r) {
       var entity = {
-        name:           r.email,
-        firstName:      r.firstName,
-        lastName:       r.lastName,
-        password:       r.password,
-        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups: [{ id: r.secId }]
+        name:   r.email,
+        groups: r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }]
       };
       return ['Add', { typeName: 'User', entity: entity }];
     });
@@ -473,12 +469,8 @@ function importUsers() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
       var entity = {
-        name:           r.email,
-        firstName:      r.firstName,
-        lastName:       r.lastName,
-        password:       r.password,
-        groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups: [{ id: r.secId }]
+        name:   r.email,
+        groups: r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }]
       };
       _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';

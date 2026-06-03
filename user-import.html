@@ -170,8 +170,15 @@ function loadReferenceData() {
   if (!_api) return;
 
   _api.call('Get', { typeName: 'Group', search: {} }, function (groups) {
+    var securityIds   = new Set(SECURITY_LEVELS.map(function (s) { return s.id; }));
+    var securityNames = new Set(SECURITY_LEVELS.map(function (s) { return s.label; }));
     GROUPS = groups
-      .filter(function (g) { return g.name && g.id !== 'GroupCompanyId'; })
+      .filter(function (g) {
+        return g.name &&
+               g.id !== 'GroupCompanyId' &&
+               !securityIds.has(g.id) &&
+               !securityNames.has(g.name);
+      })
       .map(function (g) { return { id: g.id, name: g.name }; })
       .sort(function (a, b) { return a.name.localeCompare(b.name); });
     document.getElementById('dotGroups').className = 'dot dot-ok';

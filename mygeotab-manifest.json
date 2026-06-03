@@ -4,12 +4,12 @@
     "version": "1.0.0",
     "items": [
         {
-            "url": "http://localhost:8181/user-import.html",
+            "url": "https://bjornvandenwijngaert-tech.github.io/user-import/user-import.html",
             "path": "ActivityLink/",
             "menuName": {
                 "en": "User Import"
             },
-            "icon": "http://localhost:8181/icon.svg"
+            "icon": "https://bjornvandenwijngaert-tech.github.io/user-import/icon.svg"
         }
     ]
 }

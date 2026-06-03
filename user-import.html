@@ -638,10 +638,6 @@ function buildEntity(r) {
     timeZoneId:                'Europe/London'
   };
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
-  // Keys are embedded on the User entity directly — no separate Add call needed
-  if (r.driverKey) {
-    entity.keys = [{ serialNumber: r.driverKey, driverKeyType: 'Nfc' }];
-  }
   return entity;
 }
 
@@ -667,6 +663,7 @@ function importUsers() {
     });
 
     _api.multiCall(calls, function (responses) {
+      var keyQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -674,12 +671,30 @@ function importUsers() {
           r.apiError = res.error.message || JSON.stringify(res.error);
         } else {
           r.status = 'done';
+          if (r.driverKey && typeof res === 'string') {
+            keyQueue.push({ userId: res, row: r });
+          }
         }
         completed++;
       });
-      document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-      renderPreview();
-      nextBatch(offset + BATCH);
+
+      function afterKeys() {
+        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
+        renderPreview();
+        nextBatch(offset + BATCH);
+      }
+
+      if (keyQueue.length === 0) { afterKeys(); return; }
+
+      var keyCalls = keyQueue.map(function (k) {
+        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: 'Nfc' } }];
+      });
+      _api.multiCall(keyCalls, function () {
+        afterKeys();
+      }, function (err) {
+        console.warn('[UserImport] Driver key batch failed:', err);
+        afterKeys();
+      });
 
     }, function () {
       // Whole batch rejected — fall back to per-row calls for error detail
@@ -698,10 +713,16 @@ function importUsers() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
       var entity = buildEntity(r);
-      console.log('[UserImport] Adding user:', r.email, '| entity:', JSON.stringify(entity));
-      _api.call('Add', { typeName: 'User', entity: entity }, function () {
+      _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
-        next();
+        if (r.driverKey && userId) {
+          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: 'Nfc' } },
+            function () { next(); },
+            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); next(); }
+          );
+        } else {
+          next();
+        }
       }, function (err) {
         r.status   = 'error';
         r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);

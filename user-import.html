@@ -439,8 +439,7 @@ function importUsers() {
         isDriver:               r.isDriver,
         changePassword:         true,
         userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
+        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }]
       };
       return ['Add', { typeName: 'User', entity: entity }];
     });
@@ -483,8 +482,7 @@ function importUsers() {
         isDriver:               r.isDriver,
         changePassword:         true,
         userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
+        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }]
       };
       _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';

@@ -136,11 +136,19 @@
 </div>
 
 <script>
-let _api            = null;
-let GROUPS          = [];
-let SECURITY_GROUPS = [];
-let VEHICLES        = [];
-let parsedRows      = [];
+const SECURITY_LEVELS = [
+  { label: 'Full Access',    id: 'GroupEverythingSecurityId' },
+  { label: 'Supervisor',     id: 'GroupSupervisorSecurityId' },
+  { label: 'Default User',   id: 'GroupUserSecurityId'       },
+  { label: 'Drive App User', id: 'GroupDriveUserSecurityId'  },
+  { label: 'View Only',      id: 'GroupViewOnlySecurityId'   },
+  { label: 'No Access',      id: 'GroupNothingSecurityId'    },
+];
+
+let _api       = null;
+let GROUPS     = [];
+let VEHICLES   = [];
+let parsedRows = [];
 
 // ── MyGeotab lifecycle ────────────────────────────────────────────────────────
 if (typeof geotab === 'undefined') { var geotab = { addin: {} }; }
@@ -162,13 +170,15 @@ function loadReferenceData() {
   if (!_api) return;
 
   _api.call('Get', { typeName: 'Group', search: {} }, function (groups) {
-    // Build parent map to traverse the group hierarchy
+    // Build parent map from both parent references and children arrays
     var parentMap = {};
     groups.forEach(function (g) {
       if (g.parent && g.parent.id) parentMap[g.id] = g.parent.id;
+      if (Array.isArray(g.children)) {
+        g.children.forEach(function (c) { if (c && c.id) parentMap[c.id] = g.id; });
+      }
     });
 
-    // Organisational groups are those whose ancestor chain reaches GroupCompanyId
     function isOrgGroup(id) {
       var current = id, seen = new Set();
       while (current && !seen.has(current)) {
@@ -179,19 +189,17 @@ function loadReferenceData() {
       return false;
     }
 
-    GROUPS = groups
-      .filter(function (g) { return g.name && g.id !== 'GroupCompanyId' && isOrgGroup(g.id); })
-      .map(function (g) { return { id: g.id, name: g.name }; })
-      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+    var secIds = new Set(SECURITY_LEVELS.map(function (s) { return s.id; }));
 
-    SECURITY_GROUPS = groups
-      .filter(function (g) { return g.name && !isOrgGroup(g.id) && g.id !== 'GroupCompanyId'; })
+    GROUPS = groups
+      .filter(function (g) {
+        return g.name && g.id !== 'GroupCompanyId' && !secIds.has(g.id) && isOrgGroup(g.id);
+      })
       .map(function (g) { return { id: g.id, name: g.name }; })
       .sort(function (a, b) { return a.name.localeCompare(b.name); });
 
     document.getElementById('dotGroups').className = 'dot dot-ok';
-    document.getElementById('lblGroups').textContent =
-      GROUPS.length + ' groups · ' + SECURITY_GROUPS.length + ' security levels loaded';
+    document.getElementById('lblGroups').textContent = GROUPS.length + ' groups loaded';
     checkReady();
   }, function () {
     document.getElementById('dotGroups').className = 'dot dot-err';
@@ -234,7 +242,7 @@ function downloadTemplate() {
   ];
 
   var groupNames = GROUPS.map(function (g) { return g.name; });
-  var secLabels  = SECURITY_GROUPS.map(function (s) { return s.name; });
+  var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
 
   ws['!dataValidations'] = [];
 
@@ -331,7 +339,7 @@ function parseRows(rows) {
       var password  = (r['Temporary Password'] || '').toString().trim();
       var isDriver  = (r['Is Driver']          || 'No').toString().trim().toLowerCase() === 'yes';
       var groupName = (r['Group']              || '').toString().trim();
-      var secLabel  = (r['Security Level'] || '').toString().trim();
+      var secLabel  = (r['Security Level'] || 'Default User').toString().trim();
 
       var errors = [];
       if (!firstName)           errors.push('First name required');
@@ -341,9 +349,8 @@ function parseRows(rows) {
       var matchedGroup = groupName ? GROUPS.find(function (g) { return g.name === groupName; }) : null;
       if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
 
-      var matchedSec = SECURITY_GROUPS.find(function (s) { return s.name === secLabel; })
-                    || SECURITY_GROUPS[0];
-      if (!matchedSec) errors.push('No security levels loaded — refresh the add-in');
+      var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
+                    || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
 
       // Auto-generate password if blank
       var finalPassword = password || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
@@ -355,7 +362,7 @@ function parseRows(rows) {
         password: finalPassword, passwordGenerated,
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
-        secLabel: matchedSec ? matchedSec.name : '', secId: matchedSec ? matchedSec.id : null,
+        secLabel: matchedSec.label, secId: matchedSec.id,
         errors,
         status: 'pending', apiError: ''
       };
@@ -450,7 +457,7 @@ function importUsers() {
         changePassword:         true,
         userAuthenticationType: 'BasicAuthentication',
         companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         r.secId ? [{ id: r.secId }] : []
+        securityGroups:         [{ id: r.secId }]
       };
       return ['Add', { typeName: 'User', entity: entity }];
     });
@@ -494,7 +501,7 @@ function importUsers() {
         changePassword:         true,
         userAuthenticationType: 'BasicAuthentication',
         companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         r.secId ? [{ id: r.secId }] : []
+        securityGroups:         [{ id: r.secId }]
       };
       _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';

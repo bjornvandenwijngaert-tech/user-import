@@ -638,24 +638,11 @@ function buildEntity(r) {
     timeZoneId:                'Europe/London'
   };
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
+  // Keys are embedded on the User entity directly — no separate Add call needed
+  if (r.driverKey) {
+    entity.keys = [{ serialNumber: r.driverKey, driverKeyType: 'Nfc', isImmobilizeOnly: true }];
+  }
   return entity;
-}
-
-// ── Driver key helper — called after user creation ────────────────────────────
-function addDriverKey(userId, serialNumber, onDone) {
-  _api.call('Add', {
-    typeName: 'Key',
-    entity: {
-      driver:       { id: userId },
-      serialNumber: serialNumber,
-      keyType:      { id: 'NfcKey' }
-    }
-  }, function () {
-    onDone();
-  }, function (err) {
-    console.warn('[UserImport] Driver key add failed for userId', userId, err);
-    onDone(); // user was created — don't block progress on key failure
-  });
 }
 
 // ── Import ────────────────────────────────────────────────────────────────────
@@ -680,9 +667,6 @@ function importUsers() {
     });
 
     _api.multiCall(calls, function (responses) {
-      // Collect rows that need a driver key added (requires the returned user ID)
-      var keyQueue = [];
-
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -690,34 +674,12 @@ function importUsers() {
           r.apiError = res.error.message || JSON.stringify(res.error);
         } else {
           r.status = 'done';
-          if (r.driverKey && typeof res === 'string') {
-            keyQueue.push({ userId: res, serialNumber: r.driverKey });
-          }
         }
         completed++;
       });
-
-      function afterKeys() {
-        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-        renderPreview();
-        nextBatch(offset + BATCH);
-      }
-
-      if (keyQueue.length === 0) {
-        afterKeys();
-        return;
-      }
-
-      // Add all driver keys in a follow-up batch
-      var keyCalls = keyQueue.map(function (k) {
-        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.serialNumber, keyType: { id: 'NfcKey' } } }];
-      });
-      _api.multiCall(keyCalls, function () {
-        afterKeys();
-      }, function (err) {
-        console.warn('[UserImport] Driver key batch add failed:', err);
-        afterKeys();
-      });
+      document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
+      renderPreview();
+      nextBatch(offset + BATCH);
 
     }, function () {
       // Whole batch rejected — fall back to per-row calls for error detail
@@ -736,13 +698,9 @@ function importUsers() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
       var entity = buildEntity(r);
-      _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
+      _api.call('Add', { typeName: 'User', entity: entity }, function () {
         r.status = 'done';
-        if (r.driverKey && userId) {
-          addDriverKey(userId, r.driverKey, next);
-        } else {
-          next();
-        }
+        next();
       }, function (err) {
         r.status   = 'error';
         r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);

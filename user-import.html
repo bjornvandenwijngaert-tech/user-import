@@ -436,8 +436,6 @@ function importUsers() {
         firstName:      r.firstName,
         lastName:       r.lastName,
         password:       r.password,
-        isDriver:       r.isDriver,
-        changePassword: true,
         groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
         securityGroups: [{ id: r.secId }]
       };
@@ -479,8 +477,6 @@ function importUsers() {
         firstName:      r.firstName,
         lastName:       r.lastName,
         password:       r.password,
-        isDriver:       r.isDriver,
-        changePassword: true,
         groups:         r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
         securityGroups: [{ id: r.secId }]
       };

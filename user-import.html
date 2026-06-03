@@ -491,7 +491,8 @@ function importUsers() {
         next();
       }, function (err) {
         r.status   = 'error';
-        r.apiError = typeof err === 'string' ? err : (err && err.message) || 'Unknown error';
+        r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
+        console.error('[UserImport] Add failed for', r.email, '| entity:', JSON.stringify(entity), '| error:', err);
         next();
       });
     }

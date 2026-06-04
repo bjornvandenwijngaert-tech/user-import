@@ -100,11 +100,7 @@
           <span class="text-xs text-slate-400">required</span>
         </label>
         <!-- Shown only when type = Drivers — Is Driver is always Yes, no column needed -->
-        <label id="mandatoryIsDriver" class="hidden flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
-          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
-          <span class="text-sm text-slate-700">Is Driver</span>
-          <span class="text-xs text-slate-400">always Yes</span>
-        </label>
+        <p id="mandatoryIsDriver" class="hidden text-xs text-slate-400 italic mt-1">All imported users will be set as drivers — no column needed.</p>
       </div>
 
       <div class="border-t border-slate-100 my-4"></div>
@@ -577,7 +573,8 @@ function parseRows(rows) {
       if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
 
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
-                    || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
+                    || SECURITY_LEVELS.find(function (s) { return s.label.toLowerCase() === secLabel.toLowerCase(); });
+      if (!matchedSec) errors.push('Unknown security level: "' + secLabel + '"');
 
       var passwordProvided = !!rawPwd;
       var finalPassword    = rawPwd || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + '!Aa');
@@ -588,7 +585,7 @@ function parseRows(rows) {
         password: finalPassword, passwordProvided,
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
-        secLabel: matchedSec.label, secId: matchedSec.id,
+        secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
         employeeNo, driverKey, driverKeyType,
         hasDrv, hasGrp, hasPwd, hasEmp, hasDrvKey,
         errors,
@@ -686,7 +683,7 @@ function buildEntity(r) {
     changePassword:            true,
     userAuthenticationType:    'BasicAuthentication',
     companyGroups:             r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-    securityGroups:            [{ id: r.secId }],
+    securityGroups:            r.secId ? [{ id: r.secId }] : [{ id: 'GroupUserSecurityId' }],
     isMetric:                  false,
     fuelEconomyUnit:           'MPGImperial',
     electricEnergyEconomyUnit: 'MPGEImperial',
@@ -730,8 +727,8 @@ function importUsers() {
           if (r.driverKey && typeof res === 'string') {
             keyQueue.push({ userId: res, row: r });
           }
-          if (!r.passwordProvided) {
-            inviteQueue.push(r);
+          if (!r.passwordProvided && typeof res === 'string') {
+            inviteQueue.push({ userId: res, row: r });
           }
         }
         completed++;
@@ -745,8 +742,11 @@ function importUsers() {
 
       function sendInvites() {
         if (inviteQueue.length === 0) { advance(); return; }
-        var inviteCalls = inviteQueue.map(function (r) {
-          return ['ResetPassword', { userName: r.email, database: _database }];
+        var inviteCalls = inviteQueue.map(function (k) {
+          var e = buildEntity(k.row);
+          delete e.password;
+          e.id = k.userId;
+          return ['Set', { typeName: 'User', entity: e }];
         });
         _api.multiCall(inviteCalls, function () { advance(); }, function () { advance(); });
       }
@@ -784,8 +784,11 @@ function importUsers() {
         r.status = 'done';
 
         function sendInvite() {
-          if (!r.passwordProvided) {
-            _api.call('ResetPassword', { userName: r.email, database: _database },
+          if (!r.passwordProvided && userId) {
+            var e = buildEntity(r);
+            delete e.password;
+            e.id = userId;
+            _api.call('Set', { typeName: 'User', entity: e },
               function () { next(); }, function () { next(); }
             );
           } else {

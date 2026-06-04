@@ -110,7 +110,26 @@
       <div class="border-t border-slate-100 my-4"></div>
 
       <!-- Optional fields (user configures) -->
-      <div id="optionalFieldsList" class="space-y-2.5 mb-6"></div>
+      <div id="optionalFieldsList" class="space-y-2.5 mb-4"></div>
+
+      <!-- Key type selector — shown when type supports drivers -->
+      <div id="keyTypeSection" class="hidden border-t border-slate-100 pt-4 mb-6">
+        <p class="text-xs font-medium text-slate-500 mb-2.5">Driver Key Type</p>
+        <div class="flex flex-wrap gap-5">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="Tachograph" checked class="accent-blue-600">
+            <span class="text-sm text-slate-700">Tachograph Card</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="Nfc" class="accent-blue-600">
+            <span class="text-sm text-slate-700">NFC Fob</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="CustomNfc" class="accent-blue-600">
+            <span class="text-sm text-slate-700">Custom NFC</span>
+          </label>
+        </div>
+      </div>
 
       <button onclick="confirmFields()"
         class="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
@@ -223,7 +242,7 @@ let _api           = null;
 let GROUPS         = [];
 let VEHICLES       = [];
 let parsedRows     = [];
-let templateConfig = { userType: null, selectedFields: [] };
+let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Tachograph' };
 let _refLoadCount  = 0;
 
 // ── MyGeotab lifecycle ────────────────────────────────────────────────────────
@@ -319,6 +338,9 @@ function selectUserType(type) {
   // When type = Drivers, show the mandatory "Is Driver: always Yes" indicator
   document.getElementById('mandatoryIsDriver').classList.toggle('hidden', type !== 'drivers');
 
+  // Show key type selector whenever drivers may be included
+  document.getElementById('keyTypeSection').classList.toggle('hidden', type === 'users');
+
   // Render optional checkboxes, applying visibility rules
   document.getElementById('optionalFieldsList').innerHTML = OPTIONAL_FIELDS
     .filter(function (f) {
@@ -346,6 +368,9 @@ function confirmFields() {
       return el && el.checked;
     })
     .map(function (f) { return f.key; });
+
+  var keyTypeEl = document.querySelector('input[name="keyType"]:checked');
+  templateConfig.driverKeyType = keyTypeEl ? keyTypeEl.value : 'Tachograph';
 
   var typeLabel = { users: 'Users only', drivers: 'Drivers only', both: 'Users &amp; Drivers' }[templateConfig.userType];
   var optLabels = OPTIONAL_FIELDS
@@ -391,7 +416,7 @@ function downloadTemplate() {
   if (hasGrp)    headers.push('Group');
   if (hasPwd)    headers.push('Temporary Password');
   if (hasEmp)    headers.push('Employee Number');
-  if (hasDrvKey) headers.push('Driver Key');
+  if (hasDrvKey) { headers.push('Driver Key'); headers.push('Key Type'); }
 
   var colWidths = headers.map(function (h) { return { wch: Math.max(h.length + 4, 14) }; });
   colWidths[2].wch = 34;
@@ -437,6 +462,24 @@ function downloadTemplate() {
       errorTitle: 'Invalid Group',
       showErrorMessage: true
     });
+  }
+
+  if (hasDrvKey) {
+    var keyTypeColIdx = headers.indexOf('Key Type');
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: colLetter(keyTypeColIdx) + '2:' + colLetter(keyTypeColIdx) + '500',
+      formula1: '"Tachograph,Nfc,CustomNfc"',
+      showDropDown: false,
+      error: 'Select Tachograph, Nfc, or CustomNfc.',
+      errorTitle: 'Invalid Key Type',
+      showErrorMessage: true
+    });
+    var defaultKeyType = templateConfig.driverKeyType || 'Tachograph';
+    for (var r = 2; r <= 500; r++) {
+      ws[colLetter(keyTypeColIdx) + r] = { v: defaultKeyType, t: 's' };
+    }
+    ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
   }
 
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
@@ -494,7 +537,8 @@ function parseRows(rows) {
   var hasGrp    = 'Group'              in sample;
   var hasPwd    = 'Temporary Password' in sample;
   var hasEmp    = 'Employee Number'    in sample;
-  var hasDrvKey = 'Driver Key'         in sample;
+  var hasDrvKey  = 'Driver Key' in sample;
+  var hasKeyType = 'Key Type'   in sample;
 
   parsedRows = rows
     .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
@@ -511,7 +555,8 @@ function parseRows(rows) {
       var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
       var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
       var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
-      var driverKey = hasDrvKey ? (r['Driver Key']         || '').toString().trim() : '';
+      var driverKey     = hasDrvKey  ? (r['Driver Key'] || '').toString().trim() : '';
+      var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Tachograph' : 'Tachograph';
 
       var errors = [];
       if (!firstName)           errors.push('First name required');
@@ -534,7 +579,7 @@ function parseRows(rows) {
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
         secLabel: matchedSec.label, secId: matchedSec.id,
-        employeeNo, driverKey,
+        employeeNo, driverKey, driverKeyType,
         hasDrv, hasGrp, hasPwd, hasEmp, hasDrvKey,
         errors,
         status: 'pending', apiError: ''
@@ -687,7 +732,7 @@ function importUsers() {
       if (keyQueue.length === 0) { afterKeys(); return; }
 
       var keyCalls = keyQueue.map(function (k) {
-        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: 'Nfc' } }];
+        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Tachograph' } }];
       });
       _api.multiCall(keyCalls, function () {
         afterKeys();
@@ -716,7 +761,7 @@ function importUsers() {
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
         if (r.driverKey && userId) {
-          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: 'Nfc' } },
+          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Tachograph' } },
             function () { next(); },
             function (err) { console.warn('[UserImport] Key add failed for', r.email, err); next(); }
           );

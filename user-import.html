@@ -634,7 +634,8 @@ function buildEntity(r) {
     securityGroups:            [{ id: r.secId }],
     isMetric:                  false,
     fuelEconomyUnit:           'MPGImperial',
-    electricEnergyEconomyUnit: 'MPGEImperial'
+    electricEnergyEconomyUnit: 'MPGEImperial',
+    timeZoneId:                'Europe/London'
   };
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
   return entity;
@@ -712,7 +713,6 @@ function importUsers() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
       var entity = buildEntity(r);
-      console.log('[UserImport] entity:', JSON.stringify(entity));
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
         if (r.driverKey && userId) {

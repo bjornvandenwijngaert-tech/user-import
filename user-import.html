@@ -117,12 +117,12 @@
         <p class="text-xs font-medium text-slate-500 mb-2.5">Driver Key Type</p>
         <div class="flex flex-wrap gap-5">
           <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="keyType" value="Tachograph" checked class="accent-blue-600">
-            <span class="text-sm text-slate-700">Tachograph Card</span>
+            <input type="radio" name="keyType" value="Nfc" checked class="accent-blue-600">
+            <span class="text-sm text-slate-700">NFC Fob</span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer">
-            <input type="radio" name="keyType" value="Nfc" class="accent-blue-600">
-            <span class="text-sm text-slate-700">NFC Fob</span>
+            <input type="radio" name="keyType" value="Tachograph" class="accent-blue-600">
+            <span class="text-sm text-slate-700">Tachograph Card</span>
           </label>
           <label class="flex items-center gap-2 cursor-pointer">
             <input type="radio" name="keyType" value="CustomNfc" class="accent-blue-600">
@@ -239,10 +239,11 @@ const OPTIONAL_FIELDS = [
 ];
 
 let _api           = null;
+let _database      = '';
 let GROUPS         = [];
 let VEHICLES       = [];
 let parsedRows     = [];
-let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Tachograph' };
+let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Nfc' };
 let _refLoadCount  = 0;
 
 // ── MyGeotab lifecycle ────────────────────────────────────────────────────────
@@ -251,7 +252,10 @@ geotab.addin.userImport = function () {
   return {
     initialize: function (api, state, callback) {
       _api = api;
-      if (state && state.database) document.getElementById('dbBadge').textContent = state.database;
+      if (state && state.database) {
+        _database = state.database;
+        document.getElementById('dbBadge').textContent = state.database;
+      }
       loadReferenceData();
       callback();
     },
@@ -338,8 +342,8 @@ function selectUserType(type) {
   // When type = Drivers, show the mandatory "Is Driver: always Yes" indicator
   document.getElementById('mandatoryIsDriver').classList.toggle('hidden', type !== 'drivers');
 
-  // Show key type selector whenever drivers may be included
-  document.getElementById('keyTypeSection').classList.toggle('hidden', type === 'users');
+  // Key type section visibility is driven by the driverKey checkbox state
+  updateKeyTypeVisibility();
 
   // Render optional checkboxes, applying visibility rules
   document.getElementById('optionalFieldsList').innerHTML = OPTIONAL_FIELDS
@@ -349,14 +353,20 @@ function selectUserType(type) {
       return true;
     })
     .map(function (f) {
+      var onChange = f.key === 'driverKey' ? ' onchange="updateKeyTypeVisibility()"' : '';
       return '<label class="flex items-center gap-3 cursor-pointer select-none">' +
         '<input type="checkbox" id="field-' + f.key + '"' + (f.defaultOn ? ' checked' : '') +
-        ' class="w-4 h-4 accent-blue-600">' +
+        onChange + ' class="w-4 h-4 accent-blue-600">' +
         '<span class="text-sm text-slate-700">' + f.label + '</span>' +
         '</label>';
     }).join('');
 
   document.getElementById('phaseFields').classList.remove('hidden');
+}
+
+function updateKeyTypeVisibility() {
+  var el = document.getElementById('field-driverKey');
+  document.getElementById('keyTypeSection').classList.toggle('hidden', !(el && el.checked));
 }
 
 function confirmFields() {
@@ -556,7 +566,7 @@ function parseRows(rows) {
       var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
       var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
       var driverKey     = hasDrvKey  ? (r['Driver Key'] || '').toString().trim() : '';
-      var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Tachograph' : 'Tachograph';
+      var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Nfc' : 'Nfc';
 
       var errors = [];
       if (!firstName)           errors.push('First name required');
@@ -569,13 +579,13 @@ function parseRows(rows) {
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
                     || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
 
-      var finalPassword     = rawPwd || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
-      var passwordGenerated = !rawPwd;
+      var passwordProvided = !!rawPwd;
+      var finalPassword    = rawPwd || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + '!Aa');
 
       return {
         rowNum: i + 2,
         firstName, lastName, email,
-        password: finalPassword, passwordGenerated,
+        password: finalPassword, passwordProvided,
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
         secLabel: matchedSec.label, secId: matchedSec.id,
@@ -632,9 +642,9 @@ function renderPreview() {
       statusHtml = '<span class="text-xs text-slate-300">Ready</span>';
     }
 
-    var pwDisplay = r.passwordGenerated
-      ? '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>'
-      : '<span class="text-xs text-slate-500 font-mono">'  + esc(r.password) + '</span>';
+    var pwDisplay = r.passwordProvided
+      ? '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>'
+      : '<span class="text-xs text-blue-500 italic">Invite email</span>';
 
     var cells = [tdN(r.rowNum), tdM(r.firstName), tdM(r.lastName), tdE(r.email)];
     if (r.hasDrv)    cells.push(tdS(r.isDriver ? 'Yes' : 'No'));
@@ -708,7 +718,8 @@ function importUsers() {
     });
 
     _api.multiCall(calls, function (responses) {
-      var keyQueue = [];
+      var keyQueue    = [];
+      var inviteQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -719,26 +730,37 @@ function importUsers() {
           if (r.driverKey && typeof res === 'string') {
             keyQueue.push({ userId: res, row: r });
           }
+          if (!r.passwordProvided) {
+            inviteQueue.push(r);
+          }
         }
         completed++;
       });
 
-      function afterKeys() {
+      function advance() {
         document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
         renderPreview();
         nextBatch(offset + BATCH);
       }
 
-      if (keyQueue.length === 0) { afterKeys(); return; }
+      function sendInvites() {
+        if (inviteQueue.length === 0) { advance(); return; }
+        var inviteCalls = inviteQueue.map(function (r) {
+          return ['ResetPassword', { userName: r.email, database: _database }];
+        });
+        _api.multiCall(inviteCalls, function () { advance(); }, function () { advance(); });
+      }
+
+      if (keyQueue.length === 0) { sendInvites(); return; }
 
       var keyCalls = keyQueue.map(function (k) {
-        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Tachograph' } }];
+        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc' } }];
       });
       _api.multiCall(keyCalls, function () {
-        afterKeys();
+        sendInvites();
       }, function (err) {
         console.warn('[UserImport] Driver key batch failed:', err);
-        afterKeys();
+        sendInvites();
       });
 
     }, function () {
@@ -760,18 +782,28 @@ function importUsers() {
       var entity = buildEntity(r);
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
+
+        function sendInvite() {
+          if (!r.passwordProvided) {
+            _api.call('ResetPassword', { userName: r.email, database: _database },
+              function () { next(); }, function () { next(); }
+            );
+          } else {
+            next();
+          }
+        }
+
         if (r.driverKey && userId) {
-          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Tachograph' } },
-            function () { next(); },
-            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); next(); }
+          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc' } },
+            function () { sendInvite(); },
+            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); sendInvite(); }
           );
         } else {
-          next();
+          sendInvite();
         }
       }, function (err) {
         r.status   = 'error';
         r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
-        console.error('[UserImport] Add failed for', r.email, '| entity:', JSON.stringify(entity), '| error:', err);
         next();
       });
     }
@@ -790,9 +822,11 @@ function importUsers() {
       ? 'Import ' + remaining + ' More'
       : 'All imported';
 
+    var invited = parsedRows.filter(function (r) { return r.status === 'done' && !r.passwordProvided; }).length;
+
     document.getElementById('resultsSection').classList.remove('hidden');
     document.getElementById('resultsBody').innerHTML =
-      '<div class="flex items-center gap-4">' +
+      '<div class="flex items-center gap-4 flex-wrap">' +
         '<div class="text-center px-6 py-4 rounded-xl bg-green-50 border border-green-100">' +
           '<p class="text-3xl font-bold text-green-600">' + done + '</p>' +
           '<p class="text-xs text-green-500 mt-0.5 font-medium">Created</p>' +
@@ -803,15 +837,51 @@ function importUsers() {
               '<p class="text-xs text-red-400 mt-0.5 font-medium">Failed</p>' +
             '</div>'
           : '') +
-        '<p class="text-sm text-slate-400 ml-2">' +
-          (failed > 0
-            ? 'Failed rows are highlighted in the preview. Check error tooltips for details.'
-            : 'All users created successfully. They will be prompted to change their password on first login.') +
-        '</p>' +
+        '<div class="flex flex-col gap-2 ml-2">' +
+          '<p class="text-sm text-slate-400">' +
+            (failed > 0
+              ? 'Failed rows are highlighted in the preview.'
+              : invited > 0
+                ? invited + ' user' + (invited !== 1 ? 's' : '') + ' will receive a password setup email.'
+                : 'All users created with the passwords from the template.') +
+          '</p>' +
+          '<button onclick="downloadResults()" class="self-start inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">' +
+            '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>' +
+            'Download Results' +
+          '</button>' +
+        '</div>' +
       '</div>';
   }
 
   nextBatch(0);
+}
+
+// ── Download results spreadsheet ──────────────────────────────────────────────
+function downloadResults() {
+  var rows = parsedRows.filter(function (r) { return r.status === 'done' || r.status === 'error'; });
+  if (rows.length === 0) return;
+
+  var headers = ['First Name', 'Last Name', 'Email', 'Security Level', 'Status', 'Password / Note'];
+  var data = rows.map(function (r) {
+    return [
+      r.firstName,
+      r.lastName,
+      r.email,
+      r.secLabel,
+      r.status === 'done' ? 'Created' : 'Failed: ' + r.apiError,
+      r.status === 'done'
+        ? (r.passwordProvided ? r.password : 'Invite email sent')
+        : ''
+    ];
+  });
+
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet([headers].concat(data));
+  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 34 }, { wch: 20 }, { wch: 20 }, { wch: 28 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Results');
+
+  var dbName = _database || 'UserImport';
+  XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_ImportResults.xlsx');
 }
 </script>
 </body>

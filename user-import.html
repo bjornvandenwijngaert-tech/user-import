@@ -235,6 +235,7 @@ let _database      = '';
 let GROUPS         = [];
 let VEHICLES       = [];
 let parsedRows     = [];
+let _importing     = false;
 let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Nfc' };
 let _refLoadCount  = 0;
 
@@ -660,8 +661,10 @@ function renderPreview() {
   }).join('');
 
   var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
-  document.getElementById('btnImport').disabled = importable === 0;
-  document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+  if (!_importing) {
+    document.getElementById('btnImport').disabled = importable === 0;
+    document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+  }
 }
 
 function clearFile() {
@@ -703,11 +706,12 @@ function importUsers() {
   var toImport = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; });
   if (toImport.length === 0) return;
 
+  _importing = true;
   document.getElementById('btnImport').disabled = true;
   document.getElementById('importStatus').textContent = 'Importing ' + toImport.length + ' users…';
 
   var completed = 0;
-  var BATCH = 10; // reduced from 50 — prevents API timeout on large imports
+  var BATCH = 5; // small batches to prevent API timeout on large imports
 
   function nextBatch(offset) {
     var chunk = toImport.slice(offset, offset + BATCH);
@@ -740,7 +744,7 @@ function importUsers() {
       function advance() {
         document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
         renderPreview();
-        setTimeout(function() { nextBatch(offset + BATCH); }, 500); // 500ms pause keeps session alive between batches
+        setTimeout(function() { nextBatch(offset + BATCH); }, 200);
       }
 
       function sendInvites() {
@@ -772,7 +776,7 @@ function importUsers() {
         completed += chunk.length;
         document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
         renderPreview();
-        setTimeout(function() { nextBatch(offset + BATCH); }, 500);
+        setTimeout(function() { nextBatch(offset + BATCH); }, 200);
       });
     });
   }
@@ -817,6 +821,7 @@ function importUsers() {
   }
 
   function finish() {
+    _importing = false;
     var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
     var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
 

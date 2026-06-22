@@ -710,6 +710,11 @@ function importUsers() {
   document.getElementById('btnImport').disabled = true;
   document.getElementById('importStatus').textContent = 'Importing ' + toImport.length + ' users…';
 
+  // Heartbeat — pings the API every 10s to keep the session alive during long imports
+  var _heartbeat = setInterval(function() {
+    _api.call('GetVersion', {}, function() {}, function() {});
+  }, 10000);
+
   var completed = 0;
   var BATCH = 5; // small batches to prevent API timeout on large imports
 
@@ -822,6 +827,7 @@ function importUsers() {
 
   function finish() {
     _importing = false;
+    clearInterval(_heartbeat);
     var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
     var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
 

@@ -200,6 +200,22 @@
         </button>
         <span id="importStatus" class="text-xs text-slate-400"></span>
       </div>
+      <div id="progressWrap" class="hidden mt-3">
+        <div class="flex justify-between text-xs text-slate-400 mb-1">
+          <span id="progressLabel">0 / 0 processed</span>
+          <span id="progressPct">0%</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+          <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-200" style="width:0%"></div>
+        </div>
+      </div>
+      <div id="resumeBanner" class="hidden mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+        <span class="text-xs text-amber-800 font-medium" id="resumeMsg"></span>
+        <div class="flex gap-2">
+          <button onclick="resumeImport()" class="text-xs font-semibold px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600">Resume</button>
+          <button onclick="clearCheckpoint()" class="text-xs font-semibold px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-100">Discard</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -598,6 +614,34 @@ function parseRows(rows) {
     });
 
   renderPreview();
+
+  // Check for a saved checkpoint from a previous interrupted import
+  try {
+    var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
+    if (cp && cp.offset > 0 && cp.total === parsedRows.filter(function(r){return r.errors.length===0;}).length) {
+      var banner = document.getElementById('resumeBanner');
+      document.getElementById('resumeMsg').textContent = 'Previous import was interrupted at ' + cp.offset + ' / ' + cp.total + ' users. Resume where it left off?';
+      banner.classList.remove('hidden');
+    }
+  } catch(e) {}
+}
+
+function resumeImport() {
+  try {
+    var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
+    if (!cp) return;
+    // Mark already-processed rows as done so they are skipped
+    var processed = cp.total - cp.remaining.length;
+    var idx = 0;
+    parsedRows.forEach(function(r) {
+      if (r.errors.length === 0 && r.status === 'pending') {
+        if (idx < processed) { r.status = 'done'; }
+        idx++;
+      }
+    });
+    renderPreview();
+    importUsers();
+  } catch(e) { importUsers(); }
 }
 
 // ── Preview ───────────────────────────────────────────────────────────────────
@@ -669,6 +713,9 @@ function renderPreview() {
 
 function clearFile() {
   parsedRows = [];
+  try { localStorage.removeItem('userImport_checkpoint'); } catch(e) {}
+  document.getElementById('resumeBanner').classList.add('hidden');
+  document.getElementById('progressWrap').classList.add('hidden');
   document.getElementById('previewSection').classList.add('hidden');
   document.getElementById('resultsSection').classList.add('hidden');
   document.getElementById('fileInput').value = '';
@@ -708,7 +755,9 @@ function importUsers() {
 
   _importing = true;
   document.getElementById('btnImport').disabled = true;
-  document.getElementById('importStatus').textContent = 'Importing ' + toImport.length + ' users…';
+  document.getElementById('importStatus').textContent = '';
+  document.getElementById('progressWrap').classList.remove('hidden');
+  document.getElementById('resumeBanner').classList.add('hidden');
 
   // Heartbeat — pings the API every 10s to keep the session alive during long imports
   var _heartbeat = setInterval(function() {
@@ -716,11 +765,33 @@ function importUsers() {
   }, 10000);
 
   var completed = 0;
-  var BATCH = 5; // small batches to prevent API timeout on large imports
+  var BATCH = 10;
+
+  function updateProgress() {
+    var total = toImport.length;
+    var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
+    document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' processed';
+    document.getElementById('progressPct').textContent   = pct + '%';
+    document.getElementById('progressBar').style.width   = pct + '%';
+  }
+
+  function saveCheckpoint(offset) {
+    try {
+      var pending = toImport.slice(offset).map(function(r) { return r['Email (Login)'] || r.email || ''; });
+      localStorage.setItem('userImport_checkpoint', JSON.stringify({ offset: offset, total: toImport.length, remaining: pending }));
+    } catch(e) {}
+  }
+
+  function clearCheckpoint() {
+    try { localStorage.removeItem('userImport_checkpoint'); } catch(e) {}
+    document.getElementById('resumeBanner').classList.add('hidden');
+  }
 
   function nextBatch(offset) {
     var chunk = toImport.slice(offset, offset + BATCH);
     if (chunk.length === 0) { finish(); return; }
+
+    saveCheckpoint(offset);
 
     var calls = chunk.map(function (r) {
       return ['Add', { typeName: 'User', entity: buildEntity(r) }];
@@ -746,9 +817,9 @@ function importUsers() {
         completed++;
       });
 
+      updateProgress();
+
       function advance() {
-        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-        renderPreview();
         setTimeout(function() { nextBatch(offset + BATCH); }, 200);
       }
 
@@ -779,8 +850,7 @@ function importUsers() {
       // Whole batch rejected — fall back to per-row calls for error detail
       individualFallback(chunk, function () {
         completed += chunk.length;
-        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-        renderPreview();
+        updateProgress();
         setTimeout(function() { nextBatch(offset + BATCH); }, 200);
       });
     });
@@ -828,6 +898,9 @@ function importUsers() {
   function finish() {
     _importing = false;
     clearInterval(_heartbeat);
+    clearCheckpoint();
+    document.getElementById('progressWrap').classList.add('hidden');
+    renderPreview();
     var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
     var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
 

@@ -819,6 +819,10 @@ function importUsers() {
   var completed = 0;
   var BATCH = 10;
 
+  // 10 users per batch = 10 API calls. At 250 calls/min limit → max 25 batches/min → 1 batch per 2.5s.
+  var BATCH_DELAY = 2500;
+  document.getElementById('importStatus').textContent = 'Pacing: 1 batch of 10 every 2.5s (~4 users/sec)';
+
   function updateProgress() {
     var total = toImport.length;
     var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
@@ -873,7 +877,7 @@ function importUsers() {
       updateProgress();
 
       function advance() {
-        setTimeout(function() { nextBatch(offset + BATCH); }, 200);
+        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
       }
 
       function sendInvites() {
@@ -906,7 +910,7 @@ function importUsers() {
       individualFallback(chunk, function () {
         completed += chunk.length;
         updateProgress();
-        setTimeout(function() { nextBatch(offset + BATCH); }, 200);
+        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
       });
     });
   }

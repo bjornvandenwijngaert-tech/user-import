@@ -203,7 +203,7 @@
       <div id="progressWrap" class="hidden mt-3">
         <div class="flex justify-between text-xs text-slate-400 mb-1">
           <span id="progressLabel">0 / 0 processed</span>
-          <span id="progressPct">0%</span>
+          <span id="progressPct">0% · <span id="apiCallCount">0</span> API calls</span>
         </div>
         <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
           <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-200" style="width:0%"></div>
@@ -223,6 +223,50 @@
   <div id="resultsSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
     <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Import Results</p>
     <div id="resultsBody"></div>
+  </div>
+
+  <!-- Remove Users (temporary testing tool) -->
+  <div class="bg-white rounded-2xl shadow-sm border border-red-200 p-6">
+    <div class="flex items-center gap-3 mb-1">
+      <div class="w-7 h-7 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center shrink-0">✕</div>
+      <h2 class="font-semibold text-slate-800">Find &amp; Remove Users <span class="text-xs font-normal text-red-400 ml-1">— testing only</span></h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-4 ml-10">Upload the same import file to find and remove those users from the database.</p>
+    <div class="ml-10 space-y-3">
+      <div class="drop-zone rounded-xl p-4 text-center cursor-pointer" id="removeDropZone" onclick="document.getElementById('removeFileInput').click()">
+        <input type="file" id="removeFileInput" class="hidden" accept=".xlsx,.xls,.csv" onchange="handleRemoveFile(this)">
+        <p class="text-sm text-slate-400">Drop file here or <span class="text-blue-500 font-medium">browse</span></p>
+        <p id="removeFileName" class="text-xs text-slate-400 mt-1"></p>
+      </div>
+      <div id="removePreview" class="hidden">
+        <p class="text-xs text-slate-500 mb-2"><span id="removeFoundCount">0</span> users found in database · <span id="removeNotFoundCount">0</span> not found</p>
+        <div class="max-h-48 overflow-y-auto border border-slate-100 rounded-xl">
+          <table class="w-full text-xs">
+            <thead><tr class="bg-slate-50 border-b border-slate-100">
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Email</th>
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Name</th>
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Status</th>
+            </tr></thead>
+            <tbody id="removePreviewBody"></tbody>
+          </table>
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+          <button id="btnRemove" onclick="removeUsers()" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+            <span id="btnRemoveLabel">Remove Users</span>
+          </button>
+          <span id="removeStatus" class="text-xs text-slate-400"></span>
+        </div>
+        <div id="removeProgressWrap" class="hidden mt-3">
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span id="removeProgressLabel">0 / 0 removed</span>
+            <span id="removeProgressPct">0%</span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div id="removeProgressBar" class="bg-red-500 h-2 rounded-full transition-all duration-200" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -759,8 +803,16 @@ function importUsers() {
   document.getElementById('progressWrap').classList.remove('hidden');
   document.getElementById('resumeBanner').classList.add('hidden');
 
+  var _apiCallCount = 0;
+  function trackApiCall() {
+    _apiCallCount++;
+    var el = document.getElementById('apiCallCount');
+    if (el) el.textContent = _apiCallCount;
+  }
+
   // Heartbeat — pings the API every 10s to keep the session alive during long imports
   var _heartbeat = setInterval(function() {
+    trackApiCall();
     _api.call('GetVersion', {}, function() {}, function() {});
   }, 10000);
 
@@ -797,6 +849,7 @@ function importUsers() {
       return ['Add', { typeName: 'User', entity: buildEntity(r) }];
     });
 
+    trackApiCall();
     _api.multiCall(calls, function (responses) {
       var keyQueue    = [];
       var inviteQueue = [];
@@ -831,6 +884,7 @@ function importUsers() {
           e.id = k.userId;
           return ['Set', { typeName: 'User', entity: e }];
         });
+        trackApiCall();
         _api.multiCall(inviteCalls, function () { advance(); }, function () { advance(); });
       }
 
@@ -839,6 +893,7 @@ function importUsers() {
       var keyCalls = keyQueue.map(function (k) {
         return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc' } }];
       });
+      trackApiCall();
       _api.multiCall(keyCalls, function () {
         sendInvites();
       }, function (err) {
@@ -862,6 +917,7 @@ function importUsers() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
       var entity = buildEntity(r);
+      trackApiCall();
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
 
@@ -870,6 +926,7 @@ function importUsers() {
             var e = buildEntity(r);
             delete e.password;
             e.id = userId;
+            trackApiCall();
             _api.call('Set', { typeName: 'User', entity: e },
               function () { next(); }, function () { next(); }
             );
@@ -879,6 +936,7 @@ function importUsers() {
         }
 
         if (r.driverKey && userId) {
+          trackApiCall();
           _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc' } },
             function () { sendInvite(); },
             function (err) { console.warn('[UserImport] Key add failed for', r.email, err); sendInvite(); }
@@ -972,6 +1030,131 @@ function downloadResults() {
 
   var dbName = _database || 'UserImport';
   XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_ImportResults.xlsx');
+}
+
+// ── Find & Remove ─────────────────────────────────────────────────────────────
+var _removeRows = []; // { email, firstName, lastName, userId, found }
+
+function handleRemoveFile(input) {
+  var file = input.files[0];
+  if (!file) return;
+  document.getElementById('removeFileName').textContent = file.name;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var wb  = XLSX.read(e.target.result, { type: 'array' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    var emails = raw.map(function(r) {
+      return (r['Email (Login)'] || r['Email'] || r['email'] || '').toString().trim().toLowerCase();
+    }).filter(Boolean);
+
+    if (!emails.length) {
+      alert('No email addresses found in the file.');
+      return;
+    }
+
+    document.getElementById('removeStatus').textContent = 'Looking up users…';
+    document.getElementById('removePreview').classList.remove('hidden');
+    document.getElementById('removeProgressWrap').classList.add('hidden');
+    document.getElementById('removePreviewBody').innerHTML = '<tr><td colspan="3" class="px-3 py-3 text-slate-400 text-center">Searching…</td></tr>';
+    document.getElementById('btnRemove').disabled = true;
+
+    // Look up each email in MyGeotab
+    _removeRows = emails.map(function(email) { return { email: email, firstName: '', lastName: '', userId: null, found: false }; });
+
+    var calls = emails.map(function(email) {
+      return ['Get', { typeName: 'User', search: { name: email } }];
+    });
+
+    _api.multiCall(calls, function(responses) {
+      var found = 0;
+      _removeRows.forEach(function(row, i) {
+        var res = responses[i];
+        if (res && res.length > 0) {
+          row.userId    = res[0].id;
+          row.firstName = res[0].firstName || '';
+          row.lastName  = res[0].lastName  || '';
+          row.found     = true;
+          found++;
+        }
+      });
+
+      document.getElementById('removeFoundCount').textContent    = found;
+      document.getElementById('removeNotFoundCount').textContent = _removeRows.length - found;
+      document.getElementById('removeStatus').textContent = '';
+      document.getElementById('btnRemove').disabled = found === 0;
+      document.getElementById('btnRemoveLabel').textContent = 'Remove ' + found + ' User' + (found !== 1 ? 's' : '');
+
+      document.getElementById('removePreviewBody').innerHTML = _removeRows.map(function(row) {
+        var statusHtml = row.found
+          ? '<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;">Found</span>'
+          : '<span style="background:#f1f5f9;color:#94a3b8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;">Not found</span>';
+        return '<tr class="border-b border-slate-50">'
+          + '<td class="px-3 py-2 text-slate-600">' + row.email + '</td>'
+          + '<td class="px-3 py-2 text-slate-500">' + (row.firstName + ' ' + row.lastName).trim() + '</td>'
+          + '<td class="px-3 py-2">' + statusHtml + '</td>'
+          + '</tr>';
+      }).join('');
+    }, function(err) {
+      document.getElementById('removeStatus').textContent = 'Lookup failed: ' + (err && err.message ? err.message : JSON.stringify(err));
+    });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function removeUsers() {
+  var toRemove = _removeRows.filter(function(r) { return r.found && r.userId; });
+  if (!toRemove.length) return;
+
+  if (!confirm('Remove ' + toRemove.length + ' users from the database? This cannot be undone.')) return;
+
+  document.getElementById('btnRemove').disabled = true;
+  document.getElementById('removeProgressWrap').classList.remove('hidden');
+
+  var completed = 0;
+  var BATCH = 10;
+
+  function updateRemoveProgress() {
+    var pct = Math.round(completed / toRemove.length * 100);
+    document.getElementById('removeProgressLabel').textContent = completed + ' / ' + toRemove.length + ' removed';
+    document.getElementById('removeProgressPct').textContent   = pct + '%';
+    document.getElementById('removeProgressBar').style.width   = pct + '%';
+  }
+
+  function nextBatch(offset) {
+    var chunk = toRemove.slice(offset, offset + BATCH);
+    if (chunk.length === 0) {
+      document.getElementById('removeStatus').textContent = 'Done — ' + completed + ' users removed.';
+      document.getElementById('removeProgressBar').style.background = '#16a34a';
+      return;
+    }
+    var calls = chunk.map(function(row) {
+      return ['Remove', { typeName: 'User', entity: { id: row.userId } }];
+    });
+    _api.multiCall(calls, function() {
+      completed += chunk.length;
+      updateRemoveProgress();
+      setTimeout(function() { nextBatch(offset + BATCH); }, 500);
+    }, function(err) {
+      // Fall back to individual removes on batch failure
+      var idx = 0;
+      function nextIndividual() {
+        if (idx >= chunk.length) {
+          updateRemoveProgress();
+          setTimeout(function() { nextBatch(offset + BATCH); }, 500);
+          return;
+        }
+        var row = chunk[idx++];
+        _api.call('Remove', { typeName: 'User', entity: { id: row.userId } },
+          function() { completed++; nextIndividual(); },
+          function()  { completed++; nextIndividual(); }
+        );
+      }
+      nextIndividual();
+    });
+  }
+
+  nextBatch(0);
 }
 </script>
 </body>

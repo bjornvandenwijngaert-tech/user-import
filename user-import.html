@@ -206,7 +206,7 @@
           <span id="progressPct">0% · <span id="apiCallCount">0</span> API calls</span>
         </div>
         <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-          <div id="progressBar" class="bg-blue-600 h-2 rounded-full transition-all duration-200" style="width:0%"></div>
+          <div id="progressBar" class="bg-blue-600 h-2 rounded-full" style="width:0%;transition:width 2.4s linear;"></div>
         </div>
       </div>
       <div id="resumeBanner" class="hidden mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
@@ -826,9 +826,12 @@ function importUsers() {
   function updateProgress() {
     var total = toImport.length;
     var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
+    // Animate bar toward the next batch's percentage so it glides continuously
+    var nextCompleted = Math.min(completed + BATCH, total);
+    var nextPct = total > 0 ? Math.round(nextCompleted / total * 100) : 0;
     document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' processed';
     document.getElementById('progressPct').textContent   = pct + '%';
-    document.getElementById('progressBar').style.width   = pct + '%';
+    document.getElementById('progressBar').style.width   = nextPct + '%';
   }
 
   function saveCheckpoint(offset) {
@@ -961,6 +964,9 @@ function importUsers() {
     _importing = false;
     clearInterval(_heartbeat);
     clearCheckpoint();
+    // Snap to 100% instantly then hide
+    var bar = document.getElementById('progressBar');
+    if (bar) { bar.style.transition = 'none'; bar.style.width = '100%'; }
     document.getElementById('progressWrap').classList.add('hidden');
     renderPreview();
     var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;

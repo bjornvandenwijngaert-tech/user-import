@@ -942,8 +942,8 @@ function importUsers() {
         if (setQueue.length === 0) { advance(); return; }
         var setCalls = setQueue.map(function (k) {
           var e = buildEntity(k.row);
-          if (k.row.passwordProvided) delete e.changePassword;
-          else delete e.password;
+          delete e.password;
+          delete e.changePassword;
           e.id = k.userId;
           if (k.row.driverKey) {
             e.keys = [{ serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
@@ -951,7 +951,10 @@ function importUsers() {
           return ['Set', { typeName: 'User', entity: e }];
         });
         trackApiCall();
-        _api.multiCall(setCalls, function () { advance(); }, function () { advance(); });
+        _api.multiCall(setCalls, function () { advance(); }, function (err) {
+          console.warn('[UserImport] Set batch failed:', err);
+          advance();
+        });
       }
 
       sendSets();
@@ -978,15 +981,16 @@ function importUsers() {
 
         if (userId && (r.driverKey || !r.passwordProvided)) {
           var e = buildEntity(r);
-          if (r.passwordProvided) delete e.changePassword;
-          else delete e.password;
+          delete e.password;
+          delete e.changePassword;
           e.id = userId;
           if (r.driverKey) {
             e.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
           }
           trackApiCall();
           _api.call('Set', { typeName: 'User', entity: e },
-            function () { next(); }, function () { next(); }
+            function () { next(); },
+            function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
           );
         } else {
           next();

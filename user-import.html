@@ -924,14 +924,17 @@ function importUsers() {
 
     trackApiCall();
     _api.multiCall(calls, function (responses) {
+      console.log('[UserImport] multiCall responses:', JSON.stringify(responses));
       var setQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
           r.status   = 'error';
           r.apiError = res.error.message || JSON.stringify(res.error);
+          console.warn('[UserImport] Add failed for', r.email, JSON.stringify(res));
         } else {
           r.status = 'done';
+          console.log('[UserImport] Add succeeded for', r.email, 'userId:', res);
           if (typeof res === 'string' && (!r.passwordProvided || r.driverKey)) {
             setQueue.push({ userId: res, row: r });
           }

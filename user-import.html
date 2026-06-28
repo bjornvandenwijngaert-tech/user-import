@@ -243,27 +243,15 @@ function downloadTemplate() {
 
   var groupNames = GROUPS.map(function (g) { return g.name; });
   var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
-  var driverOpts = ['Yes', 'No'];
 
-  // ── Reference sheet — all dropdown lists live here ──
-  var refRows = [['Valid Groups', 'Valid Security Levels', 'Is Driver']];
-  var maxLen  = Math.max(groupNames.length, secLabels.length, driverOpts.length);
-  for (var i = 0; i < maxLen; i++) {
-    refRows.push([groupNames[i] || '', secLabels[i] || '', driverOpts[i] || '']);
-  }
-  var wsRef = XLSX.utils.aoa_to_sheet(refRows);
-  wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }, { wch: 12 }];
-  XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
-
-  // ── Dropdowns — all reference the Valid Options sheet by range ──
   ws['!dataValidations'] = [];
 
-  // Group (col F) — dynamic list from live database groups
+  // Group dropdown → references _ref sheet so Excel handles long lists correctly
   if (groupNames.length > 0) {
     ws['!dataValidations'].push({
       type: 'list',
       sqref: 'F2:F500',
-      formula1: "'Valid Options'!$A$2:$A$" + (groupNames.length + 1),
+      formula1: '_ref!$A$2:$A$' + (groupNames.length + 1),
       showDropDown: false,
       error: 'Select a group from the list.',
       errorTitle: 'Invalid Group',
@@ -271,29 +259,36 @@ function downloadTemplate() {
     });
   }
 
-  // Security Level (col G)
+  // Security level — small enough to inline
   ws['!dataValidations'].push({
     type: 'list',
     sqref: 'G2:G500',
-    formula1: "'Valid Options'!$B$2:$B$" + (secLabels.length + 1),
+    formula1: '"' + secLabels.join(',') + '"',
     showDropDown: false,
     error: 'Select a security level from the list.',
     errorTitle: 'Invalid Security Level',
     showErrorMessage: true
   });
 
-  // Is Driver (col E)
+  // Is Driver
   ws['!dataValidations'].push({
     type: 'list',
     sqref: 'E2:E500',
-    formula1: "'Valid Options'!$C$2:$C$" + (driverOpts.length + 1),
-    showDropDown: false,
-    error: 'Select Yes or No.',
-    errorTitle: 'Invalid Value',
-    showErrorMessage: true
+    formula1: '"Yes,No"',
+    showDropDown: false
   });
 
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+  // ── Reference sheet (visible) ──
+  var refRows = [['Valid Groups', 'Valid Security Levels']];
+  var maxLen  = Math.max(groupNames.length, secLabels.length);
+  for (var i = 0; i < maxLen; i++) {
+    refRows.push([groupNames[i] || '', secLabels[i] || '']);
+  }
+  var wsRef = XLSX.utils.aoa_to_sheet(refRows);
+  wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }];
+  XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
 
   var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
   XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_UserImport_Template.xlsx');

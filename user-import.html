@@ -940,18 +940,33 @@ function importUsers() {
 
       function sendSets() {
         if (setQueue.length === 0) { advance(); return; }
+        // Step 1: Set user (activates isDriver, sends changePassword invite if needed)
         var setCalls = setQueue.map(function (k) {
           var e = buildEntity(k.row);
           delete e.password;
           delete e.changePassword;
           e.id = k.userId;
-          if (k.row.driverKey) {
-            e.keys = [{ serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
-          }
           return ['Set', { typeName: 'User', entity: e }];
         });
         trackApiCall();
-        _api.multiCall(setCalls, function () { advance(); }, function (err) {
+        _api.multiCall(setCalls, function () {
+          // Step 2: Set keys for drivers — done after isDriver is established
+          var keyQueue = setQueue.filter(function (k) { return k.row.driverKey; });
+          if (keyQueue.length === 0) { advance(); return; }
+          var keyCalls = keyQueue.map(function (k) {
+            var e = buildEntity(k.row);
+            delete e.password;
+            delete e.changePassword;
+            e.id = k.userId;
+            e.keys = [{ serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
+            return ['Set', { typeName: 'User', entity: e }];
+          });
+          trackApiCall();
+          _api.multiCall(keyCalls, function () { advance(); }, function (err) {
+            console.warn('[UserImport] Key Set batch failed:', err);
+            advance();
+          });
+        }, function (err) {
           console.warn('[UserImport] Set batch failed:', err);
           advance();
         });
@@ -984,13 +999,21 @@ function importUsers() {
           delete e.password;
           delete e.changePassword;
           e.id = userId;
-          if (r.driverKey) {
-            e.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
-          }
           trackApiCall();
-          _api.call('Set', { typeName: 'User', entity: e },
-            function () { next(); },
-            function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
+          _api.call('Set', { typeName: 'User', entity: e }, function () {
+            if (!r.driverKey) { next(); return; }
+            // Step 2: now that isDriver is established, set the key
+            var e2 = buildEntity(r);
+            delete e2.password;
+            delete e2.changePassword;
+            e2.id = userId;
+            e2.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
+            trackApiCall();
+            _api.call('Set', { typeName: 'User', entity: e2 },
+              function () { next(); },
+              function (err) { console.warn('[UserImport] Key Set failed for', r.email, err); next(); }
+            );
+          }, function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
           );
         } else {
           next();

@@ -559,7 +559,7 @@ function downloadTemplate() {
   ws['!dataValidations'].push({
     type: 'list',
     sqref: colLetter(secIdx) + '2:' + colLetter(secIdx) + '500',
-    formula1: "'Valid Options'!$B$2:$B$" + (secLabels.length + 1),
+    formula1: '"' + secLabels.join(',') + '"',
     showDropDown: false,
     error: 'Select a security level from the list.',
     errorTitle: 'Invalid Security Level',

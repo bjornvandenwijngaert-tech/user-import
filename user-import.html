@@ -858,7 +858,8 @@ function importUsers() {
 
     trackApiCall();
     _api.multiCall(calls, function (responses) {
-      var keyQueue = [];
+      var keyQueue    = [];
+      var inviteQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -868,6 +869,9 @@ function importUsers() {
           r.status = 'done';
           if (r.driverKey && typeof res === 'string') {
             keyQueue.push({ userId: res, row: r });
+          }
+          if (!r.passwordProvided && typeof res === 'string') {
+            inviteQueue.push({ userId: res, row: r });
           }
         }
         completed++;
@@ -879,17 +883,29 @@ function importUsers() {
         setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
       }
 
-      if (keyQueue.length === 0) { advance(); return; }
+      function sendInvites() {
+        if (inviteQueue.length === 0) { advance(); return; }
+        var inviteCalls = inviteQueue.map(function (k) {
+          var e = buildEntity(k.row);
+          delete e.password;
+          e.id = k.userId;
+          return ['Set', { typeName: 'User', entity: e }];
+        });
+        trackApiCall();
+        _api.multiCall(inviteCalls, function () { advance(); }, function () { advance(); });
+      }
+
+      if (keyQueue.length === 0) { sendInvites(); return; }
 
       var keyCalls = keyQueue.map(function (k) {
         return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc' } }];
       });
       trackApiCall();
       _api.multiCall(keyCalls, function () {
-        advance();
+        sendInvites();
       }, function (err) {
         console.warn('[UserImport] Driver key batch failed:', err);
-        advance();
+        sendInvites();
       });
 
     }, function () {
@@ -912,14 +928,28 @@ function importUsers() {
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
 
+        function sendInvite() {
+          if (!r.passwordProvided && userId) {
+            var e = buildEntity(r);
+            delete e.password;
+            e.id = userId;
+            trackApiCall();
+            _api.call('Set', { typeName: 'User', entity: e },
+              function () { next(); }, function () { next(); }
+            );
+          } else {
+            next();
+          }
+        }
+
         if (r.driverKey && userId) {
           trackApiCall();
           _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc' } },
-            function () { next(); },
-            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); next(); }
+            function () { sendInvite(); },
+            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); sendInvite(); }
           );
         } else {
-          next();
+          sendInvite();
         }
       }, function (err) {
         r.status   = 'error';

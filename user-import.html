@@ -346,7 +346,7 @@ const OPTIONAL_FIELDS = [
   { key: 'group',      label: 'Group',               header: 'Group',              defaultOn: true                   },
   { key: 'password',   label: 'Temporary Password',  header: 'Temporary Password', defaultOn: true                   },
   { key: 'employeeNo', label: 'Employee Number',      header: 'Employee Number',    defaultOn: false                  },
-  { key: 'driverKey',  label: 'Driver / NFC Key',    header: 'Driver Key',         defaultOn: false, onlyDriver: true },
+  { key: 'driverKey',  label: 'Driver / NFC Key',    header: 'Driver Key',         defaultOn: true,  onlyDriver: true },
 ];
 
 let _api           = null;
@@ -609,6 +609,26 @@ function downloadTemplate() {
       ws[colLetter(keyTypeColIdx) + r] = { v: defaultKeyType, t: 's' };
     }
     ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
+  }
+
+  // Column styling — navy header, alternating light/mid blue data rows
+  var HDR_FILL  = { patternType: 'solid', fgColor: { rgb: '0047BB' } };
+  var HDR_FONT  = { bold: true, color: { rgb: 'FFFFFF' }, sz: 10 };
+  var COL_A     = { patternType: 'solid', fgColor: { rgb: 'DBEAFE' } }; // light blue
+  var COL_B     = { patternType: 'solid', fgColor: { rgb: 'BFDBFE' } }; // slightly deeper blue
+
+  headers.forEach(function (h, ci) {
+    var addr = colLetter(ci) + '1';
+    if (!ws[addr]) ws[addr] = { v: h, t: 's' };
+    ws[addr].s = { fill: HDR_FILL, font: HDR_FONT, alignment: { horizontal: 'center', vertical: 'center', wrapText: true } };
+  });
+
+  for (var dr = 2; dr <= 500; dr++) {
+    headers.forEach(function (h, ci) {
+      var addr = colLetter(ci) + dr;
+      if (!ws[addr]) ws[addr] = { v: '', t: 's' };
+      ws[addr].s = { fill: ci % 2 === 0 ? COL_A : COL_B, alignment: { vertical: 'center' } };
+    });
   }
 
   XLSX.utils.book_append_sheet(wb, ws, 'Template');

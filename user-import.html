@@ -965,7 +965,8 @@ function importUsers() {
 
       sendSets();
 
-    }, function () {
+    }, function (err) {
+      console.warn('[UserImport] Whole batch rejected, falling back:', JSON.stringify(err));
       // Whole batch rejected — fall back to per-row calls for error detail
       individualFallback(chunk, function () {
         completed += chunk.length;
@@ -982,8 +983,10 @@ function importUsers() {
       var r = chunk[idx++];
       var entity = buildEntity(r);
       trackApiCall();
+      console.log('[UserImport] Individual Add for', r.email, JSON.stringify(entity));
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
+        console.log('[UserImport] Individual Add succeeded for', r.email, 'userId:', userId);
 
         if (userId && !r.passwordProvided) {
           var e = buildEntity(r);
@@ -1000,6 +1003,7 @@ function importUsers() {
       }, function (err) {
         r.status   = 'error';
         r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
+        console.warn('[UserImport] Individual Add failed for', r.email, JSON.stringify(err));
         next();
       });
     }

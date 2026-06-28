@@ -53,6 +53,40 @@
       </div>
     </div>
 
+    <!-- Import type -->
+    <div class="ml-10 mb-5">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Who are you importing?</p>
+      <div class="flex gap-3">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="importType" value="drivers" id="typeDrivers" checked onchange="onImportTypeChange()" class="accent-blue-600">
+          <span class="text-sm text-slate-700">Drivers only</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="importType" value="both" id="typeBoth" onchange="onImportTypeChange()" class="accent-blue-600">
+          <span class="text-sm text-slate-700">Drivers &amp; non-drivers</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- Optional columns -->
+    <div class="ml-10 mb-5">
+      <p class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Optional columns</p>
+      <div class="flex flex-wrap gap-x-6 gap-y-2">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="colIsDriver" checked onchange="syncIsDriverCheckbox()" class="accent-blue-600">
+          <span class="text-sm text-slate-700">Is Driver</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="colGroup" checked class="accent-blue-600">
+          <span class="text-sm text-slate-700">Group</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" id="colTempPassword" class="accent-blue-600">
+          <span class="text-sm text-slate-700">Temporary Password</span>
+        </label>
+      </div>
+    </div>
+
     <button id="btnDownload" onclick="downloadTemplate()" disabled
       class="ml-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold
              hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
@@ -226,69 +260,104 @@ function checkReady() {
   }
 }
 
+// ── Import type / column toggles ─────────────────────────────────────────────
+function onImportTypeChange() {
+  var driversOnly = document.getElementById('typeDrivers').checked;
+  var cbIsDriver  = document.getElementById('colIsDriver');
+  // When drivers only: Is Driver column is irrelevant — uncheck and disable it
+  if (driversOnly) {
+    cbIsDriver.checked = false;
+    cbIsDriver.disabled = true;
+    cbIsDriver.closest('label').classList.add('opacity-40');
+  } else {
+    cbIsDriver.disabled = false;
+    cbIsDriver.closest('label').classList.remove('opacity-40');
+  }
+}
+
+function syncIsDriverCheckbox() {}
+
 // ── Generate template ─────────────────────────────────────────────────────────
 function downloadTemplate() {
+  var driversOnly  = document.getElementById('typeDrivers').checked;
+  var inclIsDriver = !driversOnly && document.getElementById('colIsDriver').checked;
+  var inclGroup    = document.getElementById('colGroup').checked;
+  var inclPassword = document.getElementById('colTempPassword').checked;
+
   var wb = XLSX.utils.book_new();
 
-  // ── Template sheet ──
-  var headers = [
-    'First Name', 'Last Name', 'Email (Login)',
-    'Temporary Password', 'Is Driver', 'Group', 'Security Level'
-  ];
-  var ws = XLSX.utils.aoa_to_sheet([headers]);
-  ws['!cols'] = [
-    { wch: 16 }, { wch: 16 }, { wch: 30 },
-    { wch: 22 }, { wch: 12 }, { wch: 28 }, { wch: 18 }
-  ];
-
+  // ── Reference sheet — must be added first so column refs are correct ──
   var groupNames = GROUPS.map(function (g) { return g.name; });
   var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
-
-  ws['!dataValidations'] = [];
-
-  // Group dropdown → references _ref sheet so Excel handles long lists correctly
-  if (groupNames.length > 0) {
-    ws['!dataValidations'].push({
-      type: 'list',
-      sqref: 'F2:F500',
-      formula1: '_ref!$A$2:$A$' + (groupNames.length + 1),
-      showDropDown: false,
-      error: 'Select a group from the list.',
-      errorTitle: 'Invalid Group',
-      showErrorMessage: true
-    });
-  }
-
-  // Security level — small enough to inline
-  ws['!dataValidations'].push({
-    type: 'list',
-    sqref: 'G2:G500',
-    formula1: '"' + secLabels.join(',') + '"',
-    showDropDown: false,
-    error: 'Select a security level from the list.',
-    errorTitle: 'Invalid Security Level',
-    showErrorMessage: true
-  });
-
-  // Is Driver
-  ws['!dataValidations'].push({
-    type: 'list',
-    sqref: 'E2:E500',
-    formula1: '"Yes,No"',
-    showDropDown: false
-  });
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
-
-  // ── Reference sheet (visible) ──
-  var refRows = [['Valid Groups', 'Valid Security Levels']];
-  var maxLen  = Math.max(groupNames.length, secLabels.length);
+  var refRows    = [['Valid Groups', 'Valid Security Levels']];
+  var maxLen     = Math.max(groupNames.length, secLabels.length);
   for (var i = 0; i < maxLen; i++) {
     refRows.push([groupNames[i] || '', secLabels[i] || '']);
   }
   var wsRef = XLSX.utils.aoa_to_sheet(refRows);
   wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }];
   XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
+
+  // ── Build column list ──
+  // Mandatory: First Name, Last Name, Email (Login), Security Level
+  // Optional in order: Temporary Password, Is Driver, Group
+  var colDefs = [
+    { header: 'First Name',         wch: 16  },
+    { header: 'Last Name',          wch: 16  },
+    { header: 'Email (Login)',       wch: 30  },
+  ];
+  if (inclPassword) colDefs.push({ header: 'Temporary Password', wch: 22 });
+  if (inclIsDriver) colDefs.push({ header: 'Is Driver',          wch: 12 });
+  if (inclGroup)    colDefs.push({ header: 'Group',              wch: 28 });
+  colDefs.push(     { header: 'Security Level',    wch: 18 });
+
+  var headers = colDefs.map(function (c) { return c.header; });
+  var ws = XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols'] = colDefs.map(function (c) { return { wch: c.wch }; });
+
+  // ── Data validations ──
+  ws['!dataValidations'] = [];
+
+  function colLetter(idx) {
+    return String.fromCharCode(65 + idx);
+  }
+
+  headers.forEach(function (h, idx) {
+    var col = colLetter(idx);
+    if (h === 'Group' && groupNames.length > 0) {
+      ws['!dataValidations'].push({
+        type: 'list',
+        sqref: col + '2:' + col + '500',
+        formula1: "'Valid Options'!$A$2:$A$" + (groupNames.length + 1),
+        showDropDown: false,
+        error: 'Select a group from the list.',
+        errorTitle: 'Invalid Group',
+        showErrorMessage: true
+      });
+    } else if (h === 'Security Level') {
+      ws['!dataValidations'].push({
+        type: 'list',
+        sqref: col + '2:' + col + '500',
+        formula1: "'Valid Options'!$B$2:$B$" + (secLabels.length + 1),
+        showDropDown: false,
+        error: 'Select a security level from the list.',
+        errorTitle: 'Invalid Security Level',
+        showErrorMessage: true
+      });
+    } else if (h === 'Is Driver') {
+      ws['!dataValidations'].push({
+        type: 'list',
+        sqref: col + '2:' + col + '500',
+        formula1: '"Yes,No"',
+        showDropDown: false,
+        error: 'Select Yes or No.',
+        errorTitle: 'Invalid Value',
+        showErrorMessage: true
+      });
+    }
+  });
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
 
   var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
   XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_UserImport_Template.xlsx');

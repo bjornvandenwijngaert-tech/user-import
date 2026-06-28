@@ -848,9 +848,6 @@ function buildEntity(r) {
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
   if (r.isDriver) {
     entity.driverGroups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
-    if (r.driverKey) {
-      entity.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
-    }
   }
   return entity;
 }

@@ -848,6 +848,10 @@ function buildEntity(r) {
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
   if (r.isDriver) {
     entity.driverGroups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
+    entity.viewDriversOwnDataOnly = false;
+    if (r.driverKey) {
+      entity.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: true }];
+    }
   }
   return entity;
 }
@@ -947,9 +951,6 @@ function importUsers() {
           var e = buildEntity(k.row);
           delete e.password;
           e.id = k.userId;
-          if (k.row.driverKey) {
-            e.keys = [{ serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
-          }
           return ['Set', { typeName: 'User', entity: e }];
         });
         trackApiCall();
@@ -981,13 +982,10 @@ function importUsers() {
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
 
-        if (userId && (!r.passwordProvided || r.driverKey)) {
+        if (userId && !r.passwordProvided) {
           var e = buildEntity(r);
           delete e.password;
           e.id = userId;
-          if (r.driverKey) {
-            e.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
-          }
           trackApiCall();
           _api.call('Set', { typeName: 'User', entity: e },
             function () { next(); },

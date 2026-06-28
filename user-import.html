@@ -61,8 +61,12 @@
     </button>
   </div>
   <div class="flex-1 overflow-y-auto p-6 space-y-4">
-    <p class="text-sm text-slate-400">Upload the same import file to find and remove those users from the database.</p>
-    <div class="drop-zone rounded-xl p-4 text-center cursor-pointer" id="removeDropZone" onclick="document.getElementById('removeFileInput').click()">
+    <p class="text-sm text-slate-400">Uploaded the wrong users? Drop in your file — all rows or just a subset — and they'll be removed from the database.</p>
+    <div class="drop-zone rounded-xl p-4 text-center cursor-pointer" id="removeDropZone"
+      onclick="document.getElementById('removeFileInput').click()"
+      ondragover="event.preventDefault(); this.classList.add('drag-over')"
+      ondragleave="this.classList.remove('drag-over')"
+      ondrop="event.preventDefault(); this.classList.remove('drag-over'); handleRemoveFile({files: event.dataTransfer.files})">
       <input type="file" id="removeFileInput" class="hidden" accept=".xlsx,.xls,.csv" onchange="handleRemoveFile(this)">
       <p class="text-sm text-slate-400">Drop file here or <span class="text-blue-500 font-medium">browse</span></p>
       <p id="removeFileName" class="text-xs text-slate-400 mt-1"></p>

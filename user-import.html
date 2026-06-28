@@ -982,6 +982,8 @@ function importUsers() {
 
     var invited = parsedRows.filter(function (r) { return r.status === 'done' && !r.passwordProvided; }).length;
 
+    downloadResults();
+
     document.getElementById('resultsSection').classList.remove('hidden');
     document.getElementById('resultsBody').innerHTML =
       '<div class="flex items-center gap-4 flex-wrap">' +
@@ -999,9 +1001,7 @@ function importUsers() {
           '<p class="text-sm text-slate-400">' +
             (failed > 0
               ? 'Failed rows are highlighted in the preview.'
-              : invited > 0
-                ? invited + ' user' + (invited !== 1 ? 's' : '') + ' will receive a password setup email.'
-                : 'All users created with the passwords from the template.') +
+              : 'All users created successfully. Results downloaded automatically.') +
           '</p>' +
           '<button onclick="downloadResults()" class="self-start inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">' +
             '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>' +
@@ -1028,7 +1028,7 @@ function downloadResults() {
       r.secLabel,
       r.status === 'done' ? 'Created' : 'Failed: ' + r.apiError,
       r.status === 'done'
-        ? (r.passwordProvided ? r.password : 'Invite email sent')
+        ? r.password + (r.passwordProvided ? '' : ' (auto-generated)')
         : ''
     ];
   });

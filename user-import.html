@@ -40,9 +40,10 @@
       <div class="w-7 h-7 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0">1</div>
       <h2 class="font-semibold text-slate-800">Download Template</h2>
     </div>
-    <p class="text-sm text-slate-400 mb-5 ml-10">Generates a customer-specific Excel file with dropdown validation lists built from live data in this database.</p>
+    <p class="text-sm text-slate-400 mb-6 ml-10">Configure and download your user import template.</p>
 
-    <div class="flex flex-wrap gap-5 mb-5 ml-10">
+    <!-- Loading indicators -->
+    <div class="flex flex-wrap gap-5 mb-6 ml-10">
       <div class="flex items-center gap-2">
         <span id="dotGroups" class="dot dot-loading"></span>
         <span id="lblGroups" class="text-xs text-slate-500">Loading groups…</span>
@@ -53,48 +54,99 @@
       </div>
     </div>
 
-    <!-- Import type -->
-    <div class="ml-10 mb-5">
-      <p class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Who are you importing?</p>
-      <div class="flex gap-3">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="radio" name="importType" value="drivers" id="typeDrivers" checked onchange="onImportTypeChange()" class="accent-blue-600">
-          <span class="text-sm text-slate-700">Drivers only</span>
-        </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="radio" name="importType" value="both" id="typeBoth" onchange="onImportTypeChange()" class="accent-blue-600">
-          <span class="text-sm text-slate-700">Drivers &amp; non-drivers</span>
-        </label>
+    <!-- Phase 1: User Type -->
+    <div id="phaseType" class="ml-10 opacity-40 pointer-events-none transition-opacity duration-200">
+      <p class="text-sm font-medium text-slate-700 mb-3">What are you importing?</p>
+      <div class="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-1 gap-1">
+        <button onclick="selectUserType('users')" id="typeBtn-users"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Users
+        </button>
+        <button onclick="selectUserType('both')" id="typeBtn-both"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Both
+        </button>
+        <button onclick="selectUserType('drivers')" id="typeBtn-drivers"
+          class="px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700">
+          Drivers
+        </button>
       </div>
     </div>
 
-    <!-- Optional columns -->
-    <div class="ml-10 mb-5">
-      <p class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-2">Optional columns</p>
-      <div class="flex flex-wrap gap-x-6 gap-y-2">
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" id="colIsDriver" checked onchange="syncIsDriverCheckbox()" class="accent-blue-600">
-          <span class="text-sm text-slate-700">Is Driver</span>
+    <!-- Phase 2: Field Selection -->
+    <div id="phaseFields" class="hidden ml-10 mt-6">
+      <p class="text-sm font-medium text-slate-700 mb-4">Which columns do you need?</p>
+
+      <!-- Mandatory fields (always included) -->
+      <div class="space-y-2.5">
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">First Name</span>
+          <span class="text-xs text-slate-400">required</span>
         </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" id="colGroup" checked class="accent-blue-600">
-          <span class="text-sm text-slate-700">Group</span>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Last Name</span>
+          <span class="text-xs text-slate-400">required</span>
         </label>
-        <label class="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" id="colTempPassword" class="accent-blue-600">
-          <span class="text-sm text-slate-700">Temporary Password</span>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Username (Email)</span>
+          <span class="text-xs text-slate-400">required</span>
+        </label>
+        <label class="flex items-center gap-3 opacity-50 cursor-not-allowed select-none">
+          <input type="checkbox" checked disabled class="w-4 h-4 accent-blue-600">
+          <span class="text-sm text-slate-700">Security Level</span>
+          <span class="text-xs text-slate-400">required</span>
         </label>
       </div>
+
+      <div class="border-t border-slate-100 my-4"></div>
+
+      <!-- Optional fields (user configures) -->
+      <div id="optionalFieldsList" class="space-y-2.5 mb-4"></div>
+
+      <!-- Key type selector — shown when type supports drivers -->
+      <div id="keyTypeSection" class="hidden border-t border-slate-100 pt-4 mb-6">
+        <p class="text-xs font-medium text-slate-500 mb-2.5">Driver Key Type</p>
+        <div class="flex flex-wrap gap-5">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="Nfc" checked class="accent-blue-600">
+            <span class="text-sm text-slate-700">NFC Fob</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="Tachograph" class="accent-blue-600">
+            <span class="text-sm text-slate-700">Tachograph Card</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="radio" name="keyType" value="CustomNfc" class="accent-blue-600">
+            <span class="text-sm text-slate-700">Custom NFC</span>
+          </label>
+        </div>
+      </div>
+
+      <button onclick="confirmFields()"
+        class="px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+        Done
+      </button>
     </div>
 
-    <button id="btnDownload" onclick="downloadTemplate()" disabled
-      class="ml-10 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold
-             hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
-      </svg>
-      Download Template
-    </button>
+    <!-- Phase 3: Download -->
+    <div id="phaseDownload" class="hidden ml-10 mt-5">
+      <p class="text-xs text-slate-400 mb-4" id="configSummary"></p>
+      <div class="flex items-center gap-3">
+        <button onclick="downloadTemplate()"
+          class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 transition-colors">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          Download Template
+        </button>
+        <button onclick="resetWizard()" class="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-50 transition-colors">
+          Change settings
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Step 2 -->
@@ -131,17 +183,7 @@
       <div class="overflow-x-auto rounded-xl border border-slate-200">
         <table class="w-full text-sm">
           <thead>
-            <tr class="bg-slate-50 border-b border-slate-100">
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">#</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">First Name</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Last Name</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Email (Login)</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Is Driver</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Group</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Security Level</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Temp Password</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest">Status</th>
-            </tr>
+            <tr id="previewHead" class="bg-slate-50 border-b border-slate-100"></tr>
           </thead>
           <tbody id="previewBody"></tbody>
         </table>
@@ -158,6 +200,22 @@
         </button>
         <span id="importStatus" class="text-xs text-slate-400"></span>
       </div>
+      <div id="progressWrap" class="hidden mt-3">
+        <div class="flex justify-between text-xs text-slate-400 mb-1">
+          <span id="progressLabel">0 / 0 processed</span>
+          <span id="progressPct">0% · <span id="apiCallCount">0</span> API calls</span>
+        </div>
+        <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+          <div id="progressBar" class="bg-blue-600 h-2 rounded-full" style="width:0%;transition:width 2.4s linear;"></div>
+        </div>
+      </div>
+      <div id="resumeBanner" class="hidden mt-3 p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between gap-3">
+        <span class="text-xs text-amber-800 font-medium" id="resumeMsg"></span>
+        <div class="flex gap-2">
+          <button onclick="resumeImport()" class="text-xs font-semibold px-3 py-1.5 bg-amber-500 text-white rounded-lg hover:bg-amber-600">Resume</button>
+          <button onclick="clearCheckpoint()" class="text-xs font-semibold px-3 py-1.5 border border-amber-300 text-amber-700 rounded-lg hover:bg-amber-100">Discard</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -165,6 +223,50 @@
   <div id="resultsSection" class="hidden bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
     <p class="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Import Results</p>
     <div id="resultsBody"></div>
+  </div>
+
+  <!-- Remove Users (temporary testing tool) -->
+  <div class="bg-white rounded-2xl shadow-sm border border-red-200 p-6">
+    <div class="flex items-center gap-3 mb-1">
+      <div class="w-7 h-7 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center shrink-0">✕</div>
+      <h2 class="font-semibold text-slate-800">Find &amp; Remove Users <span class="text-xs font-normal text-red-400 ml-1">— testing only</span></h2>
+    </div>
+    <p class="text-sm text-slate-400 mb-4 ml-10">Upload the same import file to find and remove those users from the database.</p>
+    <div class="ml-10 space-y-3">
+      <div class="drop-zone rounded-xl p-4 text-center cursor-pointer" id="removeDropZone" onclick="document.getElementById('removeFileInput').click()">
+        <input type="file" id="removeFileInput" class="hidden" accept=".xlsx,.xls,.csv" onchange="handleRemoveFile(this)">
+        <p class="text-sm text-slate-400">Drop file here or <span class="text-blue-500 font-medium">browse</span></p>
+        <p id="removeFileName" class="text-xs text-slate-400 mt-1"></p>
+      </div>
+      <div id="removePreview" class="hidden">
+        <p class="text-xs text-slate-500 mb-2"><span id="removeFoundCount">0</span> users found in database · <span id="removeNotFoundCount">0</span> not found</p>
+        <div class="max-h-48 overflow-y-auto border border-slate-100 rounded-xl">
+          <table class="w-full text-xs">
+            <thead><tr class="bg-slate-50 border-b border-slate-100">
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Email</th>
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Name</th>
+              <th class="text-left px-3 py-2 text-slate-400 font-semibold">Status</th>
+            </tr></thead>
+            <tbody id="removePreviewBody"></tbody>
+          </table>
+        </div>
+        <div class="flex items-center gap-3 mt-3">
+          <button id="btnRemove" onclick="removeUsers()" class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled>
+            <span id="btnRemoveLabel">Remove Users</span>
+          </button>
+          <span id="removeStatus" class="text-xs text-slate-400"></span>
+        </div>
+        <div id="removeProgressWrap" class="hidden mt-3">
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span id="removeProgressLabel">0 / 0 removed</span>
+            <span id="removeProgressPct">0%</span>
+          </div>
+          <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div id="removeProgressBar" class="bg-red-500 h-2 rounded-full transition-all duration-200" style="width:0%"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
 </div>
@@ -176,13 +278,26 @@ const SECURITY_LEVELS = [
   { label: 'Default User',   id: 'GroupUserSecurityId'       },
   { label: 'Drive App User', id: 'GroupDriveUserSecurityId'  },
   { label: 'View Only',      id: 'GroupViewOnlySecurityId'   },
-  { label: 'No Access',      id: 'GroupNothingSecurityId'    },
+  { label: 'Nothing',        id: 'GroupNothingSecurityId'    },
 ];
 
-let _api       = null;
-let GROUPS     = [];
-let VEHICLES   = [];
-let parsedRows = [];
+// Order here = column order in the generated template
+// onlyDriver: only shown (and included) when type = 'drivers' or 'both'
+const OPTIONAL_FIELDS = [
+  { key: 'group',      label: 'Group',               header: 'Group',              defaultOn: true                   },
+  { key: 'password',   label: 'Temporary Password',  header: 'Temporary Password', defaultOn: true                   },
+  { key: 'employeeNo', label: 'Employee Number',      header: 'Employee Number',    defaultOn: false                  },
+  { key: 'driverKey',  label: 'Driver / NFC Key',    header: 'Driver Key',         defaultOn: false, onlyDriver: true },
+];
+
+let _api           = null;
+let _database      = '';
+let GROUPS         = [];
+let VEHICLES       = [];
+let parsedRows     = [];
+let _importing     = false;
+let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Nfc' };
+let _refLoadCount  = 0;
 
 // ── MyGeotab lifecycle ────────────────────────────────────────────────────────
 if (typeof geotab === 'undefined') { var geotab = { addin: {} }; }
@@ -190,7 +305,10 @@ geotab.addin.userImport = function () {
   return {
     initialize: function (api, state, callback) {
       _api = api;
-      if (state && state.database) document.getElementById('dbBadge').textContent = state.database;
+      if (state && state.database) {
+        _database = state.database;
+        document.getElementById('dbBadge').textContent = state.database;
+      }
       loadReferenceData();
       callback();
     },
@@ -204,7 +322,6 @@ function loadReferenceData() {
   if (!_api) return;
 
   _api.call('Get', { typeName: 'Group', search: {} }, function (groups) {
-    // Build parent map from both parent references and children arrays
     var parentMap = {};
     groups.forEach(function (g) {
       if (g.parent && g.parent.id) parentMap[g.id] = g.parent.id;
@@ -238,6 +355,7 @@ function loadReferenceData() {
   }, function () {
     document.getElementById('dotGroups').className = 'dot dot-err';
     document.getElementById('lblGroups').textContent = 'Groups unavailable';
+    checkReady();
   });
 
   _api.call('Get', { typeName: 'Device', search: {} }, function (devices) {
@@ -251,113 +369,199 @@ function loadReferenceData() {
   }, function () {
     document.getElementById('dotVehicles').className = 'dot dot-err';
     document.getElementById('lblVehicles').textContent = 'Vehicles unavailable';
+    checkReady();
   });
 }
 
 function checkReady() {
-  if (GROUPS.length > 0 || VEHICLES.length > 0) {
-    document.getElementById('btnDownload').disabled = false;
+  _refLoadCount++;
+  if (_refLoadCount >= 2) {
+    document.getElementById('phaseType').classList.remove('opacity-40', 'pointer-events-none');
   }
 }
 
-// ── Import type / column toggles ─────────────────────────────────────────────
-function onImportTypeChange() {
-  var driversOnly = document.getElementById('typeDrivers').checked;
-  var cbIsDriver  = document.getElementById('colIsDriver');
-  // When drivers only: Is Driver column is irrelevant — uncheck and disable it
-  if (driversOnly) {
-    cbIsDriver.checked = false;
-    cbIsDriver.disabled = true;
-    cbIsDriver.closest('label').classList.add('opacity-40');
-  } else {
-    cbIsDriver.disabled = false;
-    cbIsDriver.closest('label').classList.remove('opacity-40');
-  }
+// ── Wizard ────────────────────────────────────────────────────────────────────
+function selectUserType(type) {
+  templateConfig.userType = type;
+
+  // Update pill highlight
+  ['users', 'both', 'drivers'].forEach(function (t) {
+    var btn = document.getElementById('typeBtn-' + t);
+    btn.className = t === type
+      ? 'px-5 py-2 rounded-lg text-sm font-medium transition-all bg-blue-600 text-white shadow-sm'
+      : 'px-5 py-2 rounded-lg text-sm font-medium transition-all text-slate-500 hover:text-slate-700';
+  });
+
+  // Key type section visibility is driven by the driverKey checkbox state
+  updateKeyTypeVisibility();
+
+  // Render optional checkboxes, applying visibility rules
+  document.getElementById('optionalFieldsList').innerHTML = OPTIONAL_FIELDS
+    .filter(function (f) {
+      if (f.onlyBoth   && type !== 'both')                        return false;
+      if (f.onlyDriver && type !== 'drivers' && type !== 'both')  return false;
+      return true;
+    })
+    .map(function (f) {
+      var onChange = f.key === 'driverKey' ? ' onchange="updateKeyTypeVisibility()"' : '';
+      return '<label class="flex items-center gap-3 cursor-pointer select-none">' +
+        '<input type="checkbox" id="field-' + f.key + '"' + (f.defaultOn ? ' checked' : '') +
+        onChange + ' class="w-4 h-4 accent-blue-600">' +
+        '<span class="text-sm text-slate-700">' + f.label + '</span>' +
+        '</label>';
+    }).join('');
+
+  document.getElementById('phaseFields').classList.remove('hidden');
 }
 
-function syncIsDriverCheckbox() {}
+function updateKeyTypeVisibility() {
+  var el = document.getElementById('field-driverKey');
+  document.getElementById('keyTypeSection').classList.toggle('hidden', !(el && el.checked));
+}
+
+function confirmFields() {
+  templateConfig.selectedFields = OPTIONAL_FIELDS
+    .filter(function (f) {
+      if (f.onlyBoth   && templateConfig.userType !== 'both')                                      return false;
+      if (f.onlyDriver && templateConfig.userType !== 'drivers' && templateConfig.userType !== 'both') return false;
+      var el = document.getElementById('field-' + f.key);
+      return el && el.checked;
+    })
+    .map(function (f) { return f.key; });
+
+  var keyTypeEl = document.querySelector('input[name="keyType"]:checked');
+  templateConfig.driverKeyType = keyTypeEl ? keyTypeEl.value : 'Tachograph';
+
+  var typeLabel = { users: 'Users only', drivers: 'Drivers only', both: 'Users &amp; Drivers' }[templateConfig.userType];
+  var optLabels = OPTIONAL_FIELDS
+    .filter(function (f) { return templateConfig.selectedFields.indexOf(f.key) !== -1; })
+    .map(function (f) { return f.label; });
+
+  var mandatoryExtra = (templateConfig.userType === 'both' || templateConfig.userType === 'drivers')
+    ? ', Is Driver' : '';
+
+  document.getElementById('configSummary').innerHTML =
+    '<strong>' + typeLabel + '</strong> &nbsp;&middot;&nbsp; ' +
+    'First Name, Last Name, Email, Security Level' + mandatoryExtra +
+    (optLabels.length ? ', ' + optLabels.join(', ') : '');
+
+  document.getElementById('phaseFields').classList.add('hidden');
+  document.getElementById('phaseDownload').classList.remove('hidden');
+}
+
+function resetWizard() {
+  document.getElementById('phaseDownload').classList.add('hidden');
+  document.getElementById('phaseFields').classList.remove('hidden');
+}
+
+// ── Column letter helper (0-indexed → A, B … AA …) ───────────────────────────
+function colLetter(idx) {
+  var result = '', i = idx + 1;
+  while (i > 0) {
+    var rem = (i - 1) % 26;
+    result = String.fromCharCode(65 + rem) + result;
+    i = Math.floor((i - 1) / 26);
+  }
+  return result;
+}
 
 // ── Generate template ─────────────────────────────────────────────────────────
 function downloadTemplate() {
-  var driversOnly  = document.getElementById('typeDrivers').checked;
-  var inclIsDriver = !driversOnly && document.getElementById('colIsDriver').checked;
-  var inclGroup    = document.getElementById('colGroup').checked;
-  var inclPassword = document.getElementById('colTempPassword').checked;
+  var sf       = templateConfig.selectedFields;
+  var userType = templateConfig.userType;
+  var hasDrv   = userType === 'both' || userType === 'drivers';
+  var hasGrp   = sf.indexOf('group')      !== -1;
+  var hasPwd   = sf.indexOf('password')   !== -1;
+  var hasEmp   = sf.indexOf('employeeNo') !== -1;
+  var hasDrvKey= sf.indexOf('driverKey')  !== -1;
+
+  var headers = ['First Name', 'Last Name', 'Email (Login)', 'Security Level'];
+  if (hasDrv)    headers.push('Is Driver');
+  if (hasGrp)    headers.push('Group');
+  if (hasPwd)    headers.push('Temporary Password');
+  if (hasEmp)    headers.push('Employee Number');
+  if (hasDrvKey) { headers.push('Driver Key'); headers.push('Key Type'); }
+
+  var colWidths = headers.map(function (h) { return { wch: Math.max(h.length + 4, 14) }; });
+  colWidths[2].wch = 34;
 
   var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet([headers]);
+  ws['!cols'] = colWidths;
+  ws['!dataValidations'] = [];
 
-  // ── Reference sheet — must be added first so column refs are correct ──
-  var groupNames = GROUPS.map(function (g) { return g.name; });
+  var secIdx    = headers.indexOf('Security Level');
+  var driverIdx = headers.indexOf('Is Driver');
+  var groupIdx  = headers.indexOf('Group');
+
   var secLabels  = SECURITY_LEVELS.map(function (s) { return s.label; });
-  var refRows    = [['Valid Groups', 'Valid Security Levels']];
-  var maxLen     = Math.max(groupNames.length, secLabels.length);
+  var groupNames = GROUPS.map(function (g) { return g.name; });
+
+  ws['!dataValidations'].push({
+    type: 'list',
+    sqref: colLetter(secIdx) + '2:' + colLetter(secIdx) + '500',
+    formula1: "'Valid Options'!$B$2:$B$" + (secLabels.length + 1),
+    showDropDown: false,
+    error: 'Select a security level from the list.',
+    errorTitle: 'Invalid Security Level',
+    showErrorMessage: true
+  });
+
+  if (hasDrv) {
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: colLetter(driverIdx) + '2:' + colLetter(driverIdx) + '500',
+      formula1: '"Yes,No"',
+      showDropDown: false
+    });
+    if (userType === 'drivers') {
+      for (var r = 2; r <= 500; r++) {
+        ws[colLetter(driverIdx) + r] = { v: 'Yes', t: 's' };
+      }
+      ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
+    }
+  }
+
+  if (hasGrp && groupNames.length > 0) {
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: colLetter(groupIdx) + '2:' + colLetter(groupIdx) + '500',
+      formula1: "'Valid Options'!$A$2:$A$" + (groupNames.length + 1),
+      showDropDown: false,
+      error: 'Select a group from the list.',
+      errorTitle: 'Invalid Group',
+      showErrorMessage: true
+    });
+  }
+
+  if (hasDrvKey) {
+    var keyTypeColIdx = headers.indexOf('Key Type');
+    ws['!dataValidations'].push({
+      type: 'list',
+      sqref: colLetter(keyTypeColIdx) + '2:' + colLetter(keyTypeColIdx) + '500',
+      formula1: '"Tachograph,Nfc,CustomNfc"',
+      showDropDown: false,
+      error: 'Select Tachograph, Nfc, or CustomNfc.',
+      errorTitle: 'Invalid Key Type',
+      showErrorMessage: true
+    });
+    var defaultKeyType = templateConfig.driverKeyType || 'Tachograph';
+    for (var r = 2; r <= 500; r++) {
+      ws[colLetter(keyTypeColIdx) + r] = { v: defaultKeyType, t: 's' };
+    }
+    ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+  var refRows = [['Valid Groups', 'Valid Security Levels']];
+  var maxLen  = Math.max(groupNames.length, secLabels.length);
   for (var i = 0; i < maxLen; i++) {
     refRows.push([groupNames[i] || '', secLabels[i] || '']);
   }
   var wsRef = XLSX.utils.aoa_to_sheet(refRows);
   wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }];
   XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
-
-  // ── Build column list ──
-  // Mandatory: First Name, Last Name, Email (Login), Security Level
-  // Optional in order: Temporary Password, Is Driver, Group
-  var colDefs = [
-    { header: 'First Name',         wch: 16  },
-    { header: 'Last Name',          wch: 16  },
-    { header: 'Email (Login)',       wch: 30  },
-  ];
-  if (inclPassword) colDefs.push({ header: 'Temporary Password', wch: 22 });
-  if (inclIsDriver) colDefs.push({ header: 'Is Driver',          wch: 12 });
-  if (inclGroup)    colDefs.push({ header: 'Group',              wch: 28 });
-  colDefs.push(     { header: 'Security Level',    wch: 18 });
-
-  var headers = colDefs.map(function (c) { return c.header; });
-  var ws = XLSX.utils.aoa_to_sheet([headers]);
-  ws['!cols'] = colDefs.map(function (c) { return { wch: c.wch }; });
-
-  // ── Data validations ──
-  ws['!dataValidations'] = [];
-
-  function colLetter(idx) {
-    return String.fromCharCode(65 + idx);
-  }
-
-  headers.forEach(function (h, idx) {
-    var col = colLetter(idx);
-    if (h === 'Group' && groupNames.length > 0) {
-      ws['!dataValidations'].push({
-        type: 'list',
-        sqref: col + '2:' + col + '500',
-        formula1: "'Valid Options'!$A$2:$A$" + (groupNames.length + 1),
-        showDropDown: false,
-        error: 'Select a group from the list.',
-        errorTitle: 'Invalid Group',
-        showErrorMessage: true
-      });
-    } else if (h === 'Security Level') {
-      ws['!dataValidations'].push({
-        type: 'list',
-        sqref: col + '2:' + col + '500',
-        formula1: "'Valid Options'!$B$2:$B$" + (secLabels.length + 1),
-        showDropDown: false,
-        error: 'Select a security level from the list.',
-        errorTitle: 'Invalid Security Level',
-        showErrorMessage: true
-      });
-    } else if (h === 'Is Driver') {
-      ws['!dataValidations'].push({
-        type: 'list',
-        sqref: col + '2:' + col + '500',
-        formula1: '"Yes,No"',
-        showDropDown: false,
-        error: 'Select Yes or No.',
-        errorTitle: 'Invalid Value',
-        showErrorMessage: true
-      });
-    }
-  });
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Template');
 
   var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
   XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_UserImport_Template.xlsx');
@@ -392,23 +596,37 @@ function processFile(file) {
       alert('Sheet "Template" not found. Make sure you\'re uploading the file from Step 1.');
       return;
     }
-    var rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
-    parseRows(rows);
+    parseRows(XLSX.utils.sheet_to_json(ws, { defval: '' }));
   };
   reader.readAsArrayBuffer(file);
 }
 
 function parseRows(rows) {
+  var sample    = rows[0] || {};
+  var hasDrv    = 'Is Driver'          in sample;
+  var hasGrp    = 'Group'              in sample;
+  var hasPwd    = 'Temporary Password' in sample;
+  var hasEmp    = 'Employee Number'    in sample;
+  var hasDrvKey  = 'Driver Key' in sample;
+  var hasKeyType = 'Key Type'   in sample;
+
   parsedRows = rows
     .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
     .map(function (r, i) {
-      var firstName = (r['First Name']         || '').toString().trim();
-      var lastName  = (r['Last Name']          || '').toString().trim();
-      var email     = (r['Email (Login)']      || '').toString().trim();
-      var password  = (r['Temporary Password'] || '').toString().trim();
-      var isDriver  = (r['Is Driver']          || 'No').toString().trim().toLowerCase() === 'yes';
-      var groupName = (r['Group']              || '').toString().trim();
+      var firstName = (r['First Name']    || '').toString().trim();
+      var lastName  = (r['Last Name']     || '').toString().trim();
+      var email     = (r['Email (Login)'] || '').toString().trim();
       var secLabel  = (r['Security Level'] || 'Default User').toString().trim();
+
+      var isDriver = hasDrv
+        ? (r['Is Driver'] || 'No').toString().trim().toLowerCase() === 'yes'
+        : templateConfig.userType === 'drivers';
+
+      var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
+      var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
+      var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
+      var driverKey     = hasDrvKey  ? (r['Driver Key'] || '').toString().trim() : '';
+      var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Nfc' : 'Nfc';
 
       var errors = [];
       if (!firstName)           errors.push('First name required');
@@ -419,29 +637,62 @@ function parseRows(rows) {
       if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
 
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
-                    || SECURITY_LEVELS.find(function (s) { return s.label === 'Default User'; });
+                    || SECURITY_LEVELS.find(function (s) { return s.label.toLowerCase() === secLabel.toLowerCase(); });
+      if (!matchedSec) errors.push('Unknown security level: "' + secLabel + '"');
 
-      // Auto-generate password if blank
-      var finalPassword = password || ('Temp@' + (i + 1) + Math.random().toString(36).slice(2, 6).toUpperCase() + '!');
-      var passwordGenerated = !password;
+      var passwordProvided = !!rawPwd;
+      var finalPassword    = rawPwd || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + '!Aa');
 
       return {
         rowNum: i + 2,
         firstName, lastName, email,
-        password: finalPassword, passwordGenerated,
+        password: finalPassword, passwordProvided,
         isDriver,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
-        secLabel: matchedSec.label, secId: matchedSec.id,
+        secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
+        employeeNo, driverKey, driverKeyType,
+        hasDrv, hasGrp, hasPwd, hasEmp, hasDrvKey,
         errors,
         status: 'pending', apiError: ''
       };
     });
 
   renderPreview();
+
+  // Check for a saved checkpoint from a previous interrupted import
+  try {
+    var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
+    if (cp && cp.offset > 0 && cp.total === parsedRows.filter(function(r){return r.errors.length===0;}).length) {
+      var banner = document.getElementById('resumeBanner');
+      document.getElementById('resumeMsg').textContent = 'Previous import was interrupted at ' + cp.offset + ' / ' + cp.total + ' users. Resume where it left off?';
+      banner.classList.remove('hidden');
+    }
+  } catch(e) {}
+}
+
+function resumeImport() {
+  try {
+    var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
+    if (!cp) return;
+    // Mark already-processed rows as done so they are skipped
+    var processed = cp.total - cp.remaining.length;
+    var idx = 0;
+    parsedRows.forEach(function(r) {
+      if (r.errors.length === 0 && r.status === 'pending') {
+        if (idx < processed) { r.status = 'done'; }
+        idx++;
+      }
+    });
+    renderPreview();
+    importUsers();
+  } catch(e) { importUsers(); }
 }
 
 // ── Preview ───────────────────────────────────────────────────────────────────
 function renderPreview() {
+  if (parsedRows.length === 0) return;
+
+  var f = parsedRows[0];
   var validCount   = parsedRows.filter(function (r) { return r.errors.length === 0; }).length;
   var invalidCount = parsedRows.length - validCount;
 
@@ -450,46 +701,65 @@ function renderPreview() {
     parsedRows.length + ' rows · ' + validCount + ' valid' +
     (invalidCount > 0 ? ' · ' + invalidCount + ' with errors' : '');
 
-  var tbody = document.getElementById('previewBody');
-  tbody.innerHTML = parsedRows.map(function (r) {
+  var thC = 'px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest';
+  var headCols = ['#', 'First Name', 'Last Name', 'Email (Login)'];
+  if (f.hasDrv)    headCols.push('Is Driver');
+  if (f.hasGrp)    headCols.push('Group');
+  headCols.push('Security Level', 'Password');
+  if (f.hasEmp)    headCols.push('Emp #');
+  if (f.hasDrvKey) headCols.push('Driver Key');
+  headCols.push('Status');
+
+  document.getElementById('previewHead').innerHTML =
+    headCols.map(function (h) { return '<th class="' + thC + '">' + h + '</th>'; }).join('');
+
+  var tdN = function (v) { return '<td class="px-4 py-3 text-xs text-slate-400">'  + v          + '</td>'; };
+  var tdM = function (v) { return '<td class="px-4 py-3 text-sm text-slate-700">'  + esc(v)     + '</td>'; };
+  var tdE = function (v) { return '<td class="px-4 py-3 text-sm text-slate-600">'  + esc(v)     + '</td>'; };
+  var tdS = function (v) { return '<td class="px-4 py-3 text-xs text-slate-500">'  + esc(v)     + '</td>'; };
+  var tdR = function (v) { return '<td class="px-4 py-3">'                         + v          + '</td>'; };
+
+  document.getElementById('previewBody').innerHTML = parsedRows.map(function (r) {
     var statusHtml;
     if (r.status === 'done') {
-      statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">✓ Created</span>';
+      statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">&#x2713; Created</span>';
     } else if (r.status === 'error') {
-      statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">✕ Failed</span>';
+      statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">&#x2715; Failed</span>';
     } else if (r.errors.length > 0) {
-      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">⚠ ' + esc(r.errors[0]) + '</span>';
+      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">&#x26A0; ' + esc(r.errors[0]) + '</span>';
     } else {
       statusHtml = '<span class="text-xs text-slate-300">Ready</span>';
     }
 
-    var pwDisplay = r.status === 'done' || r.status === 'pending'
-      ? (r.passwordGenerated
-          ? '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>'
-          : '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>')
-      : '—';
+    var pwDisplay = r.passwordProvided
+      ? '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>'
+      : '<span class="text-xs text-blue-500 italic">Invite email</span>';
 
-    return '<tr class="border-b border-slate-100 ' + (r.errors.length > 0 ? 'bg-red-50/30' : '') + '">' +
-      '<td class="px-4 py-3 text-xs text-slate-400">' + r.rowNum + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.firstName) + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-700">' + esc(r.lastName)  + '</td>' +
-      '<td class="px-4 py-3 text-sm text-slate-600">' + esc(r.email)     + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + (r.isDriver ? 'Yes' : 'No') + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.groupName || '—') + '</td>' +
-      '<td class="px-4 py-3 text-xs text-slate-500">' + esc(r.secLabel) + '</td>' +
-      '<td class="px-4 py-3">' + pwDisplay + '</td>' +
-      '<td class="px-4 py-3">' + statusHtml + '</td>' +
-      '</tr>';
+    var cells = [tdN(r.rowNum), tdM(r.firstName), tdM(r.lastName), tdE(r.email)];
+    if (r.hasDrv)    cells.push(tdS(r.isDriver ? 'Yes' : 'No'));
+    if (r.hasGrp)    cells.push(tdS(r.groupName || '—'));
+    cells.push(tdS(r.secLabel));
+    cells.push(tdR(pwDisplay));
+    if (r.hasEmp)    cells.push(tdS(r.employeeNo  || '—'));
+    if (r.hasDrvKey) cells.push(tdS(r.driverKey   || '—'));
+    cells.push(tdR(statusHtml));
+
+    return '<tr class="border-b border-slate-100' + (r.errors.length > 0 ? ' bg-red-50/30' : '') + '">' +
+      cells.join('') + '</tr>';
   }).join('');
 
   var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
-  var btn = document.getElementById('btnImport');
-  btn.disabled = importable === 0;
-  document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+  if (!_importing) {
+    document.getElementById('btnImport').disabled = importable === 0;
+    document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+  }
 }
 
 function clearFile() {
   parsedRows = [];
+  try { localStorage.removeItem('userImport_checkpoint'); } catch(e) {}
+  document.getElementById('resumeBanner').classList.add('hidden');
+  document.getElementById('progressWrap').classList.add('hidden');
   document.getElementById('previewSection').classList.add('hidden');
   document.getElementById('resultsSection').classList.add('hidden');
   document.getElementById('fileInput').value = '';
@@ -499,6 +769,27 @@ function esc(str) {
   return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// ── Entity builder ────────────────────────────────────────────────────────────
+function buildEntity(r) {
+  var entity = {
+    name:                      r.email,
+    firstName:                 r.firstName,
+    lastName:                  r.lastName,
+    password:                  r.password,
+    isDriver:                  r.isDriver,
+    changePassword:            true,
+    userAuthenticationType:    'BasicAuthentication',
+    companyGroups:             r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
+    securityGroups:            r.secId ? [{ id: r.secId }] : [{ id: 'GroupUserSecurityId' }],
+    isMetric:                  false,
+    fuelEconomyUnit:           'MPGImperial',
+    electricEnergyEconomyUnit: 'MPGEImperial',
+    timeZoneId:                'Europe/London'
+  };
+  if (r.employeeNo) entity.employeeNo = r.employeeNo;
+  return entity;
+}
+
 // ── Import ────────────────────────────────────────────────────────────────────
 function importUsers() {
   if (!_api) { alert('Not connected to MyGeotab.'); return; }
@@ -506,32 +797,69 @@ function importUsers() {
   var toImport = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; });
   if (toImport.length === 0) return;
 
+  _importing = true;
   document.getElementById('btnImport').disabled = true;
-  document.getElementById('importStatus').textContent = 'Importing ' + toImport.length + ' users…';
+  document.getElementById('importStatus').textContent = '';
+  document.getElementById('progressWrap').classList.remove('hidden');
+  document.getElementById('resumeBanner').classList.add('hidden');
+
+  var _apiCallCount = 0;
+  function trackApiCall() {
+    _apiCallCount++;
+    var el = document.getElementById('apiCallCount');
+    if (el) el.textContent = _apiCallCount;
+  }
+
+  // Heartbeat — pings the API every 10s to keep the session alive during long imports
+  var _heartbeat = setInterval(function() {
+    trackApiCall();
+    _api.call('GetVersion', {}, function() {}, function() {});
+  }, 10000);
 
   var completed = 0;
-  var BATCH = 50;
+  var BATCH = 10;
+
+  // 10 users per batch = 10 API calls. At 250 calls/min limit → max 25 batches/min → 1 batch per 2.5s.
+  var BATCH_DELAY = 2500;
+  document.getElementById('importStatus').textContent = 'Pacing: 1 batch of 10 every 2.5s (~4 users/sec)';
+
+  function updateProgress() {
+    var total = toImport.length;
+    var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
+    // Animate bar toward the next batch's percentage so it glides continuously
+    var nextCompleted = Math.min(completed + BATCH, total);
+    var nextPct = total > 0 ? Math.round(nextCompleted / total * 100) : 0;
+    document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' processed';
+    document.getElementById('progressPct').textContent   = pct + '%';
+    document.getElementById('progressBar').style.width   = nextPct + '%';
+  }
+
+  function saveCheckpoint(offset) {
+    try {
+      var pending = toImport.slice(offset).map(function(r) { return r['Email (Login)'] || r.email || ''; });
+      localStorage.setItem('userImport_checkpoint', JSON.stringify({ offset: offset, total: toImport.length, remaining: pending }));
+    } catch(e) {}
+  }
+
+  function clearCheckpoint() {
+    try { localStorage.removeItem('userImport_checkpoint'); } catch(e) {}
+    document.getElementById('resumeBanner').classList.add('hidden');
+  }
 
   function nextBatch(offset) {
     var chunk = toImport.slice(offset, offset + BATCH);
     if (chunk.length === 0) { finish(); return; }
 
+    saveCheckpoint(offset);
+
     var calls = chunk.map(function (r) {
-      var entity = {
-        name:                   r.email,
-        firstName:              r.firstName,
-        lastName:               r.lastName,
-        password:               r.password,
-        isDriver:               r.isDriver,
-        changePassword:         true,
-        userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
-      };
-      return ['Add', { typeName: 'User', entity: entity }];
+      return ['Add', { typeName: 'User', entity: buildEntity(r) }];
     });
 
+    trackApiCall();
     _api.multiCall(calls, function (responses) {
+      var keyQueue    = [];
+      var inviteQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -539,19 +867,53 @@ function importUsers() {
           r.apiError = res.error.message || JSON.stringify(res.error);
         } else {
           r.status = 'done';
+          if (r.driverKey && typeof res === 'string') {
+            keyQueue.push({ userId: res, row: r });
+          }
+          if (!r.passwordProvided && typeof res === 'string') {
+            inviteQueue.push({ userId: res, row: r });
+          }
         }
         completed++;
       });
-      document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-      renderPreview();
-      nextBatch(offset + BATCH);
-    }, function (err) {
-      // Whole batch failed — fall back to individual calls so we get per-row results
+
+      updateProgress();
+
+      function advance() {
+        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
+      }
+
+      function sendInvites() {
+        if (inviteQueue.length === 0) { advance(); return; }
+        var inviteCalls = inviteQueue.map(function (k) {
+          var e = buildEntity(k.row);
+          delete e.password;
+          e.id = k.userId;
+          return ['Set', { typeName: 'User', entity: e }];
+        });
+        trackApiCall();
+        _api.multiCall(inviteCalls, function () { advance(); }, function () { advance(); });
+      }
+
+      if (keyQueue.length === 0) { sendInvites(); return; }
+
+      var keyCalls = keyQueue.map(function (k) {
+        return ['Add', { typeName: 'Key', entity: { driver: { id: k.userId }, serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc' } }];
+      });
+      trackApiCall();
+      _api.multiCall(keyCalls, function () {
+        sendInvites();
+      }, function (err) {
+        console.warn('[UserImport] Driver key batch failed:', err);
+        sendInvites();
+      });
+
+    }, function () {
+      // Whole batch rejected — fall back to per-row calls for error detail
       individualFallback(chunk, function () {
         completed += chunk.length;
-        document.getElementById('importStatus').textContent = completed + ' / ' + toImport.length + ' processed';
-        renderPreview();
-        nextBatch(offset + BATCH);
+        updateProgress();
+        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
       });
     });
   }
@@ -561,24 +923,37 @@ function importUsers() {
     function next() {
       if (idx >= chunk.length) { done(); return; }
       var r = chunk[idx++];
-      var entity = {
-        name:                   r.email,
-        firstName:              r.firstName,
-        lastName:               r.lastName,
-        password:               r.password,
-        isDriver:               r.isDriver,
-        changePassword:         true,
-        userAuthenticationType: 'BasicAuthentication',
-        companyGroups:          r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
-        securityGroups:         [{ id: r.secId }]
-      };
-      _api.call('Add', { typeName: 'User', entity: entity }, function () {
+      var entity = buildEntity(r);
+      trackApiCall();
+      _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
-        next();
+
+        function sendInvite() {
+          if (!r.passwordProvided && userId) {
+            var e = buildEntity(r);
+            delete e.password;
+            e.id = userId;
+            trackApiCall();
+            _api.call('Set', { typeName: 'User', entity: e },
+              function () { next(); }, function () { next(); }
+            );
+          } else {
+            next();
+          }
+        }
+
+        if (r.driverKey && userId) {
+          trackApiCall();
+          _api.call('Add', { typeName: 'Key', entity: { driver: { id: userId }, serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc' } },
+            function () { sendInvite(); },
+            function (err) { console.warn('[UserImport] Key add failed for', r.email, err); sendInvite(); }
+          );
+        } else {
+          sendInvite();
+        }
       }, function (err) {
         r.status   = 'error';
         r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
-        console.error('[UserImport] Add failed for', r.email, '| entity:', JSON.stringify(entity), '| error:', err);
         next();
       });
     }
@@ -586,22 +961,30 @@ function importUsers() {
   }
 
   function finish() {
+    _importing = false;
+    clearInterval(_heartbeat);
+    clearCheckpoint();
+    // Snap to 100% instantly then hide
+    var bar = document.getElementById('progressBar');
+    if (bar) { bar.style.transition = 'none'; bar.style.width = '100%'; }
+    document.getElementById('progressWrap').classList.add('hidden');
+    renderPreview();
     var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
     var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
 
     document.getElementById('importStatus').textContent = '';
 
     var remaining = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
-    var btn = document.getElementById('btnImport');
-    btn.disabled = remaining === 0;
+    document.getElementById('btnImport').disabled = remaining === 0;
     document.getElementById('btnImportLabel').textContent = remaining > 0
       ? 'Import ' + remaining + ' More'
       : 'All imported';
 
-    var section = document.getElementById('resultsSection');
-    section.classList.remove('hidden');
+    var invited = parsedRows.filter(function (r) { return r.status === 'done' && !r.passwordProvided; }).length;
+
+    document.getElementById('resultsSection').classList.remove('hidden');
     document.getElementById('resultsBody').innerHTML =
-      '<div class="flex items-center gap-4">' +
+      '<div class="flex items-center gap-4 flex-wrap">' +
         '<div class="text-center px-6 py-4 rounded-xl bg-green-50 border border-green-100">' +
           '<p class="text-3xl font-bold text-green-600">' + done + '</p>' +
           '<p class="text-xs text-green-500 mt-0.5 font-medium">Created</p>' +
@@ -612,12 +995,173 @@ function importUsers() {
               '<p class="text-xs text-red-400 mt-0.5 font-medium">Failed</p>' +
             '</div>'
           : '') +
-        '<p class="text-sm text-slate-400 ml-2">' +
-          (failed > 0
-            ? 'Failed rows are highlighted in the preview. Check error tooltips for details.'
-            : 'All users created successfully. They will be prompted to change their password on first login.') +
-        '</p>' +
+        '<div class="flex flex-col gap-2 ml-2">' +
+          '<p class="text-sm text-slate-400">' +
+            (failed > 0
+              ? 'Failed rows are highlighted in the preview.'
+              : invited > 0
+                ? invited + ' user' + (invited !== 1 ? 's' : '') + ' will receive a password setup email.'
+                : 'All users created with the passwords from the template.') +
+          '</p>' +
+          '<button onclick="downloadResults()" class="self-start inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">' +
+            '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>' +
+            'Download Results' +
+          '</button>' +
+        '</div>' +
       '</div>';
+  }
+
+  nextBatch(0);
+}
+
+// ── Download results spreadsheet ──────────────────────────────────────────────
+function downloadResults() {
+  var rows = parsedRows.filter(function (r) { return r.status === 'done' || r.status === 'error'; });
+  if (rows.length === 0) return;
+
+  var headers = ['First Name', 'Last Name', 'Email', 'Security Level', 'Status', 'Password / Note'];
+  var data = rows.map(function (r) {
+    return [
+      r.firstName,
+      r.lastName,
+      r.email,
+      r.secLabel,
+      r.status === 'done' ? 'Created' : 'Failed: ' + r.apiError,
+      r.status === 'done'
+        ? (r.passwordProvided ? r.password : 'Invite email sent')
+        : ''
+    ];
+  });
+
+  var wb = XLSX.utils.book_new();
+  var ws = XLSX.utils.aoa_to_sheet([headers].concat(data));
+  ws['!cols'] = [{ wch: 16 }, { wch: 16 }, { wch: 34 }, { wch: 20 }, { wch: 20 }, { wch: 28 }];
+  XLSX.utils.book_append_sheet(wb, ws, 'Results');
+
+  var dbName = _database || 'UserImport';
+  XLSX.writeFile(wb, dbName.replace(/[^a-z0-9_\-]/gi, '_') + '_ImportResults.xlsx');
+}
+
+// ── Find & Remove ─────────────────────────────────────────────────────────────
+var _removeRows = []; // { email, firstName, lastName, userId, found }
+
+function handleRemoveFile(input) {
+  var file = input.files[0];
+  if (!file) return;
+  document.getElementById('removeFileName').textContent = file.name;
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var wb  = XLSX.read(e.target.result, { type: 'array' });
+    var ws  = wb.Sheets[wb.SheetNames[0]];
+    var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    var emails = raw.map(function(r) {
+      return (r['Email (Login)'] || r['Email'] || r['email'] || '').toString().trim().toLowerCase();
+    }).filter(Boolean);
+
+    if (!emails.length) {
+      alert('No email addresses found in the file.');
+      return;
+    }
+
+    document.getElementById('removeStatus').textContent = 'Looking up users…';
+    document.getElementById('removePreview').classList.remove('hidden');
+    document.getElementById('removeProgressWrap').classList.add('hidden');
+    document.getElementById('removePreviewBody').innerHTML = '<tr><td colspan="3" class="px-3 py-3 text-slate-400 text-center">Searching…</td></tr>';
+    document.getElementById('btnRemove').disabled = true;
+
+    // Look up each email in MyGeotab
+    _removeRows = emails.map(function(email) { return { email: email, firstName: '', lastName: '', userId: null, found: false }; });
+
+    var calls = emails.map(function(email) {
+      return ['Get', { typeName: 'User', search: { name: email } }];
+    });
+
+    _api.multiCall(calls, function(responses) {
+      var found = 0;
+      _removeRows.forEach(function(row, i) {
+        var res = responses[i];
+        if (res && res.length > 0) {
+          row.userId    = res[0].id;
+          row.firstName = res[0].firstName || '';
+          row.lastName  = res[0].lastName  || '';
+          row.found     = true;
+          found++;
+        }
+      });
+
+      document.getElementById('removeFoundCount').textContent    = found;
+      document.getElementById('removeNotFoundCount').textContent = _removeRows.length - found;
+      document.getElementById('removeStatus').textContent = '';
+      document.getElementById('btnRemove').disabled = found === 0;
+      document.getElementById('btnRemoveLabel').textContent = 'Remove ' + found + ' User' + (found !== 1 ? 's' : '');
+
+      document.getElementById('removePreviewBody').innerHTML = _removeRows.map(function(row) {
+        var statusHtml = row.found
+          ? '<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;">Found</span>'
+          : '<span style="background:#f1f5f9;color:#94a3b8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;">Not found</span>';
+        return '<tr class="border-b border-slate-50">'
+          + '<td class="px-3 py-2 text-slate-600">' + row.email + '</td>'
+          + '<td class="px-3 py-2 text-slate-500">' + (row.firstName + ' ' + row.lastName).trim() + '</td>'
+          + '<td class="px-3 py-2">' + statusHtml + '</td>'
+          + '</tr>';
+      }).join('');
+    }, function(err) {
+      document.getElementById('removeStatus').textContent = 'Lookup failed: ' + (err && err.message ? err.message : JSON.stringify(err));
+    });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function removeUsers() {
+  var toRemove = _removeRows.filter(function(r) { return r.found && r.userId; });
+  if (!toRemove.length) return;
+
+  if (!confirm('Remove ' + toRemove.length + ' users from the database? This cannot be undone.')) return;
+
+  document.getElementById('btnRemove').disabled = true;
+  document.getElementById('removeProgressWrap').classList.remove('hidden');
+
+  var completed = 0;
+  var BATCH = 10;
+
+  function updateRemoveProgress() {
+    var pct = Math.round(completed / toRemove.length * 100);
+    document.getElementById('removeProgressLabel').textContent = completed + ' / ' + toRemove.length + ' removed';
+    document.getElementById('removeProgressPct').textContent   = pct + '%';
+    document.getElementById('removeProgressBar').style.width   = pct + '%';
+  }
+
+  function nextBatch(offset) {
+    var chunk = toRemove.slice(offset, offset + BATCH);
+    if (chunk.length === 0) {
+      document.getElementById('removeStatus').textContent = 'Done — ' + completed + ' users removed.';
+      document.getElementById('removeProgressBar').style.background = '#16a34a';
+      return;
+    }
+    var calls = chunk.map(function(row) {
+      return ['Remove', { typeName: 'User', entity: { id: row.userId } }];
+    });
+    _api.multiCall(calls, function() {
+      completed += chunk.length;
+      updateRemoveProgress();
+      setTimeout(function() { nextBatch(offset + BATCH); }, 500);
+    }, function(err) {
+      // Fall back to individual removes on batch failure
+      var idx = 0;
+      function nextIndividual() {
+        if (idx >= chunk.length) {
+          updateRemoveProgress();
+          setTimeout(function() { nextBatch(offset + BATCH); }, 500);
+          return;
+        }
+        var row = chunk[idx++];
+        _api.call('Remove', { typeName: 'User', entity: { id: row.userId } },
+          function() { completed++; nextIndividual(); },
+          function()  { completed++; nextIndividual(); }
+        );
+      }
+      nextIndividual();
+    });
   }
 
   nextBatch(0);

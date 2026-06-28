@@ -1027,9 +1027,7 @@ function downloadResults() {
       r.email,
       r.secLabel,
       r.status === 'done' ? 'Created' : 'Failed: ' + r.apiError,
-      r.status === 'done'
-        ? r.password + (r.passwordProvided ? '' : ' (auto-generated)')
-        : ''
+      r.status === 'done' ? r.password : ''
     ];
   });
 

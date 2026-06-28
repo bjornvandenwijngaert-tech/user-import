@@ -794,7 +794,7 @@ function renderPreview() {
       ? '<span class="text-xs text-slate-500 font-mono">' + esc(r.password) + '</span>'
       : '<span class="text-xs text-amber-500 font-mono">' + esc(r.password) + ' <span class="text-amber-400">(auto)</span></span>';
 
-    var cells = [tdN(r.rowNum), tdM(r.firstName), tdM(r.lastName), tdE(r.email)];
+    var cells = [tdN(r.rowNum - 1), tdM(r.firstName), tdM(r.lastName), tdE(r.email)];
     if (r.hasDrv)    cells.push(tdS(r.isDriver ? 'Yes' : 'No'));
     if (r.hasGrp)    cells.push(tdS(r.groupName || '—'));
     cells.push(tdS(r.secLabel));

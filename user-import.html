@@ -920,7 +920,7 @@ function importUsers() {
 
     trackApiCall();
     _api.multiCall(calls, function (responses) {
-      var inviteQueue = [];
+      var setQueue = [];
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
@@ -928,8 +928,8 @@ function importUsers() {
           r.apiError = res.error.message || JSON.stringify(res.error);
         } else {
           r.status = 'done';
-          if (!r.passwordProvided && typeof res === 'string') {
-            inviteQueue.push({ userId: res, row: r });
+          if (typeof res === 'string' && (!r.passwordProvided || r.driverKey)) {
+            setQueue.push({ userId: res, row: r });
           }
         }
         completed++;
@@ -941,22 +941,25 @@ function importUsers() {
         setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
       }
 
-      function sendInvites() {
-        if (inviteQueue.length === 0) { advance(); return; }
-        var inviteCalls = inviteQueue.map(function (k) {
+      function sendSets() {
+        if (setQueue.length === 0) { advance(); return; }
+        var setCalls = setQueue.map(function (k) {
           var e = buildEntity(k.row);
           delete e.password;
           e.id = k.userId;
+          if (k.row.driverKey) {
+            e.keys = [{ serialNumber: k.row.driverKey, driverKeyType: k.row.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
+          }
           return ['Set', { typeName: 'User', entity: e }];
         });
         trackApiCall();
-        _api.multiCall(inviteCalls, function () { advance(); }, function (err) {
-          console.warn('[UserImport] Invite Set failed:', err);
+        _api.multiCall(setCalls, function () { advance(); }, function (err) {
+          console.warn('[UserImport] Set failed:', err);
           advance();
         });
       }
 
-      sendInvites();
+      sendSets();
 
     }, function () {
       // Whole batch rejected — fall back to per-row calls for error detail
@@ -978,14 +981,17 @@ function importUsers() {
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
 
-        if (!r.passwordProvided && userId) {
+        if (userId && (!r.passwordProvided || r.driverKey)) {
           var e = buildEntity(r);
           delete e.password;
           e.id = userId;
+          if (r.driverKey) {
+            e.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: false }];
+          }
           trackApiCall();
           _api.call('Set', { typeName: 'User', entity: e },
             function () { next(); },
-            function (err) { console.warn('[UserImport] Invite Set failed for', r.email, err); next(); }
+            function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
           );
         } else {
           next();

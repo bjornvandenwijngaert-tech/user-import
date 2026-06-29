@@ -363,6 +363,8 @@ const OPTIONAL_FIELDS = [
   { key: 'group',      label: 'Group',               header: 'Group',              defaultOn: true                   },
   { key: 'password',   label: 'Temporary Password',  header: 'Temporary Password', defaultOn: true                   },
   { key: 'employeeNo', label: 'Employee Number',      header: 'Employee Number',    defaultOn: false                  },
+  { key: 'phone',      label: 'Phone Number',         header: 'Phone Number',       defaultOn: false                  },
+  { key: 'comment',    label: 'Comment',              header: 'Comment',            defaultOn: false                  },
   { key: 'driverKey',  label: 'Driver / NFC Key',    header: 'Driver Key',         defaultOn: true,  onlyDriver: true },
 ];
 
@@ -549,6 +551,8 @@ function downloadTemplate() {
   var hasGrp   = sf.indexOf('group')      !== -1;
   var hasPwd   = sf.indexOf('password')   !== -1;
   var hasEmp   = sf.indexOf('employeeNo') !== -1;
+  var hasPhone = sf.indexOf('phone')      !== -1;
+  var hasCmt   = sf.indexOf('comment')   !== -1;
   var hasDrvKey= sf.indexOf('driverKey')  !== -1;
 
   var headers = ['First Name', 'Last Name', 'Email (Login)', 'Security Level'];
@@ -556,10 +560,13 @@ function downloadTemplate() {
   if (hasGrp)    headers.push('Group');
   if (hasPwd)    headers.push('Temporary Password');
   if (hasEmp)    headers.push('Employee Number');
+  if (hasPhone)  headers.push('Phone Number');
+  if (hasCmt)    headers.push('Comment');
   if (hasDrvKey) { headers.push('Driver Key'); headers.push('Key Type'); }
 
   var colWidths = headers.map(function (h) { return { wch: Math.max(h.length + 4, 14) }; });
   colWidths[2].wch = 34;
+  if (hasPhone) colWidths[headers.indexOf('Phone Number')].wch = 22;
 
   var wb = XLSX.utils.book_new();
   var ws = XLSX.utils.aoa_to_sheet([headers]);
@@ -608,6 +615,14 @@ function downloadTemplate() {
       errorTitle: 'Invalid Group',
       showErrorMessage: true
     });
+  }
+
+  if (hasPhone) {
+    var phoneColIdx = headers.indexOf('Phone Number');
+    for (var r = 2; r <= 500; r++) {
+      ws[colLetter(phoneColIdx) + r] = { v: '+44 ', t: 's' };
+    }
+    ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
   }
 
   if (hasDrvKey) {
@@ -698,13 +713,15 @@ function processFile(file) {
 }
 
 function parseRows(rows) {
-  var sample    = rows[0] || {};
-  var hasDrv    = 'Is Driver'          in sample;
-  var hasGrp    = 'Group'              in sample;
-  var hasPwd    = 'Temporary Password' in sample;
-  var hasEmp    = 'Employee Number'    in sample;
-  var hasDrvKey  = 'Driver Key' in sample;
-  var hasKeyType = 'Key Type'   in sample;
+  var sample     = rows[0] || {};
+  var hasDrv     = 'Is Driver'          in sample;
+  var hasGrp     = 'Group'              in sample;
+  var hasPwd     = 'Temporary Password' in sample;
+  var hasEmp     = 'Employee Number'    in sample;
+  var hasPhone   = 'Phone Number'       in sample;
+  var hasCmt     = 'Comment'            in sample;
+  var hasDrvKey  = 'Driver Key'         in sample;
+  var hasKeyType = 'Key Type'           in sample;
 
   parsedRows = rows
     .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
@@ -723,6 +740,8 @@ function parseRows(rows) {
       var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
       var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
       var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
+      var phone     = hasPhone  ? (r['Phone Number']       || '').toString().trim() : '';
+      var comment   = hasCmt    ? (r['Comment']            || '').toString().trim() : '';
       var driverKey     = hasDrvKey  ? (r['Driver Key'] || '').toString().trim() : '';
       var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Nfc' : 'Nfc';
 
@@ -749,8 +768,8 @@ function parseRows(rows) {
         isDriver, isDriverInvalid,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
         secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
-        employeeNo, driverKey, driverKeyType,
-        hasDrv, hasGrp, hasPwd, hasEmp, hasDrvKey,
+        employeeNo, phone, comment, driverKey, driverKeyType,
+        hasDrv, hasGrp, hasPwd, hasEmp, hasPhone, hasCmt, hasDrvKey,
         errors,
         status: 'pending', apiError: ''
       };
@@ -806,6 +825,8 @@ function renderPreview() {
   if (f.hasGrp)    headCols.push('Group');
   headCols.push('Security Level', 'Password');
   if (f.hasEmp)    headCols.push('Emp #');
+  if (f.hasPhone)  headCols.push('Phone');
+  if (f.hasCmt)    headCols.push('Comment');
   if (f.hasDrvKey) headCols.push('Driver Key');
   headCols.push('Status');
 
@@ -839,8 +860,10 @@ function renderPreview() {
     if (r.hasGrp)    cells.push(tdS(r.groupName || '—'));
     cells.push(tdS(r.secLabel));
     cells.push(tdR(pwDisplay));
-    if (r.hasEmp)    cells.push(tdS(r.employeeNo  || '—'));
-    if (r.hasDrvKey) cells.push(tdS(r.driverKey   || '—'));
+    if (r.hasEmp)    cells.push(tdS(r.employeeNo || '—'));
+    if (r.hasPhone)  cells.push(tdS(r.phone      || '—'));
+    if (r.hasCmt)    cells.push(tdS(r.comment    || '—'));
+    if (r.hasDrvKey) cells.push(tdS(r.driverKey  || '—'));
     cells.push(tdR(statusHtml));
 
     return '<tr class="border-b border-slate-100' + (r.errors.length > 0 ? ' bg-red-50/30' : '') + '">' +
@@ -989,6 +1012,8 @@ function buildEntity(r) {
     timeZoneId:                'Europe/London'
   };
   if (r.employeeNo) entity.employeeNo = r.employeeNo;
+  if (r.phone)      entity.phoneNumber = r.phone;
+  if (r.comment)    entity.comment     = r.comment;
   if (r.isDriver) {
     entity.driverGroups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
     entity.viewDriversOwnDataOnly = false;

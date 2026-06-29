@@ -560,13 +560,16 @@ function downloadTemplate() {
   if (hasGrp)    headers.push('Group');
   if (hasPwd)    headers.push('Temporary Password');
   if (hasEmp)    headers.push('Employee Number');
-  if (hasPhone)  headers.push('Phone Number');
+  if (hasPhone)  { headers.push('Phone Prefix'); headers.push('Phone Number'); }
   if (hasCmt)    headers.push('Comment');
   if (hasDrvKey) { headers.push('Driver Key'); headers.push('Key Type'); }
 
   var colWidths = headers.map(function (h) { return { wch: Math.max(h.length + 4, 14) }; });
   colWidths[2].wch = 34;
-  if (hasPhone) colWidths[headers.indexOf('Phone Number')].wch = 22;
+  if (hasPhone) {
+    colWidths[headers.indexOf('Phone Prefix')].wch = 14;
+    colWidths[headers.indexOf('Phone Number')].wch = 20;
+  }
 
   var wb = XLSX.utils.book_new();
   var ws = XLSX.utils.aoa_to_sheet([headers]);
@@ -618,9 +621,9 @@ function downloadTemplate() {
   }
 
   if (hasPhone) {
-    var phoneColIdx = headers.indexOf('Phone Number');
+    var phonePfxIdx = headers.indexOf('Phone Prefix');
     for (var r = 2; r <= 500; r++) {
-      ws[colLetter(phoneColIdx) + r] = { v: '+44 ', t: 's' };
+      ws[colLetter(phonePfxIdx) + r] = { v: '+44', t: 's' };
     }
     ws['!ref'] = 'A1:' + colLetter(headers.length - 1) + '500';
   }
@@ -718,7 +721,7 @@ function parseRows(rows) {
   var hasGrp     = 'Group'              in sample;
   var hasPwd     = 'Temporary Password' in sample;
   var hasEmp     = 'Employee Number'    in sample;
-  var hasPhone   = 'Phone Number'       in sample;
+  var hasPhone   = 'Phone Number'       in sample || 'Phone Prefix' in sample;
   var hasCmt     = 'Comment'            in sample;
   var hasDrvKey  = 'Driver Key'         in sample;
   var hasKeyType = 'Key Type'           in sample;
@@ -740,7 +743,9 @@ function parseRows(rows) {
       var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
       var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
       var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
-      var phone     = hasPhone  ? (r['Phone Number']       || '').toString().trim() : '';
+      var phonePrefix = hasPhone ? (r['Phone Prefix'] || '').toString().trim() : '';
+      var phoneNum    = hasPhone ? (r['Phone Number'] || '').toString().trim() : '';
+      var phone       = phoneNum ? (phonePrefix ? phonePrefix + ' ' + phoneNum : phoneNum) : '';
       var comment   = hasCmt    ? (r['Comment']            || '').toString().trim() : '';
       var driverKey     = hasDrvKey  ? (r['Driver Key'] || '').toString().trim() : '';
       var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Nfc' : 'Nfc';
@@ -825,7 +830,7 @@ function renderPreview() {
   if (f.hasGrp)    headCols.push('Group');
   headCols.push('Security Level', 'Password');
   if (f.hasEmp)    headCols.push('Emp #');
-  if (f.hasPhone)  headCols.push('Phone');
+  if (f.hasPhone)  headCols.push('Phone Number');
   if (f.hasCmt)    headCols.push('Comment');
   if (f.hasDrvKey) headCols.push('Driver Key');
   headCols.push('Status');
@@ -843,6 +848,8 @@ function renderPreview() {
     var statusHtml;
     if (r.status === 'done') {
       statusHtml = '<span class="badge-ok text-xs font-semibold px-2 py-0.5 rounded-full">&#x2713; Created</span>';
+    } else if (r.status === 'duplicate') {
+      statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="User already exists in the database">&#x2713; Already exists</span>';
     } else if (r.status === 'error') {
       statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">&#x2715; Failed</span>';
     } else if (r.errors.length > 0) {
@@ -974,9 +981,29 @@ function confirmFix(rowNum) {
 }
 
 function confirmAllFixes() {
-  parsedRows.filter(function (r) { return r.errors.length > 0; }).forEach(function (r) {
-    confirmFix(r.rowNum);
+  // Snapshot all values before any DOM changes
+  var fixes = parsedRows.filter(function (r) { return r.errors.length > 0; }).map(function (r) {
+    var secEl = document.getElementById('fixSec_' + r.rowNum);
+    var grpEl = document.getElementById('fixGrp_' + r.rowNum);
+    var drvEl = document.getElementById('fixDrv_' + r.rowNum);
+    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVal: grpEl ? grpEl.value : null, drvVal: drvEl ? drvEl.value : null };
   });
+  fixes.forEach(function (fix) {
+    var r = parsedRows.find(function (p) { return p.rowNum === fix.rowNum; });
+    if (!r) return;
+    if (fix.secVal) {
+      var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === fix.secVal; });
+      if (matchedSec) { r.secId = matchedSec.id; r.secLabel = matchedSec.label; }
+    }
+    if (fix.grpVal !== null) {
+      var matchedGrp = GROUPS.find(function (g) { return g.id === fix.grpVal; });
+      r.groupId   = matchedGrp ? matchedGrp.id   : null;
+      r.groupName = matchedGrp ? matchedGrp.name : '';
+    }
+    if (fix.drvVal !== null) { r.isDriver = fix.drvVal === 'yes'; r.isDriverInvalid = false; }
+    r.errors = [];
+  });
+  renderPreview();
 }
 
 function clearFile() {
@@ -1097,8 +1124,14 @@ function importUsers() {
       chunk.forEach(function (r, i) {
         var res = responses[i];
         if (res && typeof res === 'object' && res.error) {
-          r.status   = 'error';
-          r.apiError = res.error.message || JSON.stringify(res.error);
+          var errMsg = res.error.message || JSON.stringify(res.error);
+          if (errMsg.indexOf('DuplicateUserException') !== -1 || errMsg.indexOf('Duplicate') !== -1) {
+            r.status   = 'duplicate';
+            r.apiError = 'User already exists';
+          } else {
+            r.status   = 'error';
+            r.apiError = errMsg;
+          }
           console.warn('[UserImport] Add failed for', r.email, JSON.stringify(res));
         } else {
           r.status = 'done';
@@ -1169,8 +1202,14 @@ function importUsers() {
           next();
         }
       }, function (err) {
-        r.status   = 'error';
-        r.apiError = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
+        var errMsg = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
+        if (errMsg.indexOf('DuplicateUserException') !== -1 || errMsg.indexOf('Duplicate') !== -1) {
+          r.status   = 'duplicate';
+          r.apiError = 'User already exists';
+        } else {
+          r.status   = 'error';
+          r.apiError = errMsg;
+        }
         console.warn('[UserImport] Individual Add failed for', r.email, JSON.stringify(err));
         next();
       });
@@ -1187,8 +1226,9 @@ function importUsers() {
     if (bar) { bar.style.transition = 'none'; bar.style.width = '100%'; }
     document.getElementById('progressWrap').classList.add('hidden');
     renderPreview();
-    var done   = parsedRows.filter(function (r) { return r.status === 'done';  }).length;
-    var failed = parsedRows.filter(function (r) { return r.status === 'error'; }).length;
+    var done      = parsedRows.filter(function (r) { return r.status === 'done';      }).length;
+    var dupes     = parsedRows.filter(function (r) { return r.status === 'duplicate'; }).length;
+    var failed    = parsedRows.filter(function (r) { return r.status === 'error';     }).length;
 
     document.getElementById('importStatus').textContent = '';
 
@@ -1209,6 +1249,12 @@ function importUsers() {
           '<p class="text-3xl font-bold text-green-600">' + done + '</p>' +
           '<p class="text-xs text-green-500 mt-0.5 font-medium">Created</p>' +
         '</div>' +
+        (dupes > 0
+          ? '<div class="text-center px-6 py-4 rounded-xl bg-amber-50 border border-amber-100">' +
+              '<p class="text-3xl font-bold text-amber-500">' + dupes + '</p>' +
+              '<p class="text-xs text-amber-400 mt-0.5 font-medium">Already existed</p>' +
+            '</div>'
+          : '') +
         (failed > 0
           ? '<div class="text-center px-6 py-4 rounded-xl bg-red-50 border border-red-100">' +
               '<p class="text-3xl font-bold text-red-500">' + failed + '</p>' +
@@ -1219,7 +1265,9 @@ function importUsers() {
           '<p class="text-sm text-slate-400">' +
             (failed > 0
               ? 'Failed rows are highlighted in the preview.'
-              : 'All users created successfully. Results downloaded automatically.') +
+              : dupes > 0
+                ? 'Some users already existed and were skipped. Results downloaded automatically.'
+                : 'All users created successfully. Results downloaded automatically.') +
           '</p>' +
           '<button onclick="downloadResults()" class="self-start inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 transition-colors">' +
             '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>' +
@@ -1234,7 +1282,7 @@ function importUsers() {
 
 // ── Download results spreadsheet ──────────────────────────────────────────────
 function downloadResults() {
-  var rows = parsedRows.filter(function (r) { return r.status === 'done' || r.status === 'error'; });
+  var rows = parsedRows.filter(function (r) { return r.status === 'done' || r.status === 'duplicate' || r.status === 'error'; });
   if (rows.length === 0) return;
 
   var headers = ['First Name', 'Last Name', 'Email', 'Security Level', 'Status', 'Password / Note'];
@@ -1244,7 +1292,9 @@ function downloadResults() {
       r.lastName,
       r.email,
       r.secLabel,
-      r.status === 'done' ? 'Created' : 'Failed: ' + r.apiError,
+      r.status === 'done'      ? 'Created'
+        : r.status === 'duplicate' ? 'Already existed'
+        : 'Failed: ' + r.apiError,
       r.status === 'done' ? r.password : ''
     ];
   });

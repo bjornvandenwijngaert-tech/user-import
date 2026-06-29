@@ -714,9 +714,11 @@ function parseRows(rows) {
       var email     = (r['Email (Login)'] || '').toString().trim();
       var secLabel  = (r['Security Level'] || 'Default User').toString().trim();
 
+      var rawIsDriver = hasDrv ? (r['Is Driver'] || '').toString().trim() : '';
       var isDriver = hasDrv
-        ? (r['Is Driver'] || 'No').toString().trim().toLowerCase() === 'yes'
+        ? rawIsDriver.toLowerCase() === 'yes'
         : templateConfig.userType === 'drivers';
+      var isDriverInvalid = hasDrv && rawIsDriver !== '' && rawIsDriver.toLowerCase() !== 'yes' && rawIsDriver.toLowerCase() !== 'no';
 
       var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
       var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
@@ -728,6 +730,7 @@ function parseRows(rows) {
       if (!firstName)           errors.push('First name required');
       if (!lastName)            errors.push('Last name required');
       if (!email.includes('@')) errors.push('Invalid email');
+      if (isDriverInvalid)      errors.push('Is Driver must be Yes or No (got: "' + rawIsDriver + '")');
 
       var matchedGroup = groupName ? GROUPS.find(function (g) { return g.name === groupName; }) : null;
       if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
@@ -743,7 +746,7 @@ function parseRows(rows) {
         rowNum: i + 2,
         firstName, lastName, email,
         password: finalPassword, passwordProvided,
-        isDriver,
+        isDriver, isDriverInvalid,
         groupName, groupId: matchedGroup ? matchedGroup.id : null,
         secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
         employeeNo, driverKey, driverKeyType,
@@ -891,6 +894,13 @@ function renderFixErrors() {
         }).join('')
       + '</select>';
 
+    var drvSel = r.hasDrv
+      ? '<select id="fixDrv_' + r.rowNum + '" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">'
+          + '<option value="yes"' + (r.isDriver  ? ' selected' : '') + '>Yes</option>'
+          + '<option value="no"'  + (!r.isDriver ? ' selected' : '') + '>No</option>'
+          + '</select>'
+      : '';
+
     return '<div id="fixRow_' + r.rowNum + '" class="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-amber-100 bg-amber-50/40">'
       + '<div class="min-w-0 flex-1">'
       +   '<p class="text-sm font-medium text-slate-700">' + esc(r.firstName + ' ' + r.lastName) + '</p>'
@@ -898,6 +908,7 @@ function renderFixErrors() {
       +   '<p class="text-xs text-amber-600 mt-0.5">' + esc(r.errors.join(' · ')) + '</p>'
       + '</div>'
       + '<div class="flex flex-wrap items-center gap-2">'
+      +   (r.hasDrv ? '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Is Driver</span>' + drvSel + '</div>' : '')
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Security Level</span>' + secSel + '</div>'
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Group</span>' + grpSel + '</div>'
       +   '<button onclick="confirmFix(' + r.rowNum + ')" class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
@@ -914,6 +925,7 @@ function confirmFix(rowNum) {
 
   var secEl = document.getElementById('fixSec_' + rowNum);
   var grpEl = document.getElementById('fixGrp_' + rowNum);
+  var drvEl = document.getElementById('fixDrv_' + rowNum);
 
   var newSecId = secEl ? secEl.value : r.secId;
   var newGrpId = grpEl ? grpEl.value : r.groupId;
@@ -925,6 +937,7 @@ function confirmFix(rowNum) {
   r.secLabel = matchedSec ? matchedSec.label : r.secLabel;
   r.groupId  = matchedGrp ? matchedGrp.id    : null;
   r.groupName= matchedGrp ? matchedGrp.name  : '';
+  if (drvEl) { r.isDriver = drvEl.value === 'yes'; r.isDriverInvalid = false; }
   r.errors   = [];
 
   var rowEl = document.getElementById('fixRow_' + rowNum);

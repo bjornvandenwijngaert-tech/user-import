@@ -83,6 +83,23 @@
           <tbody id="removePreviewBody"></tbody>
         </table>
       </div>
+      <!-- Deletion gate: the Remove button stays locked until the operator
+           types the name of the database they are about to delete from. -->
+      <div id="removeGate" class="hidden rounded-xl border border-red-200 bg-red-50 p-3 space-y-2">
+        <p class="text-xs font-bold text-red-700 uppercase tracking-wide">Permanent deletion</p>
+        <p class="text-xs text-red-700 leading-relaxed">
+          <span id="removeGateCount">0</span> user(s) will be permanently removed from
+          <span id="removeGateDb" class="font-mono font-bold"></span>.
+          This cannot be undone.
+        </p>
+        <label for="removeGateInput" class="block text-xs text-red-700">
+          Type <span id="removeGateExpected" class="font-mono font-bold"></span> to confirm:
+        </label>
+        <input id="removeGateInput" type="text" autocomplete="off" spellcheck="false"
+          oninput="onRemoveGateInput()"
+          class="w-full px-2 py-1.5 rounded-lg border border-red-300 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
+          placeholder="database name">
+      </div>
       <div class="flex items-center gap-3">
         <button id="btnRemove" onclick="removeUsers()" class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 text-white text-sm font-semibold hover:bg-red-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed" disabled>
           <span id="btnRemoveLabel">Remove Users</span>
@@ -367,6 +384,30 @@ const OPTIONAL_FIELDS = [
   { key: 'comment',    label: 'Comment',              header: 'Comment',            defaultOn: false                  },
   { key: 'driverKey',  label: 'Driver / NFC Key',    header: 'Driver Key',         defaultOn: true,  onlyDriver: true },
 ];
+
+// A row is considered present (rather than trailing spreadsheet padding) if any
+// of these carry a value. Used so half-filled rows surface as errors.
+const ROW_PRESENCE_FIELDS = ['Email (Login)', 'First Name', 'Last Name'];
+// MIFARE UIDs are 4 bytes (8 hex chars) or 7 bytes (14 hex chars).
+const VALID_NFC_KEY = /^([0-9a-fA-F]{8}|[0-9a-fA-F]{14})$/;
+
+/** Readable text from a thrown value or a MyGeotab API error object. */
+function errText(err) {
+  if (!err) return 'unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return err.message;
+  try { return JSON.stringify(err); } catch (e) { return String(err); }
+}
+
+/** Cryptographically random temporary password meeting MyGeotab complexity. */
+function randomPassword() {
+  var alphabet = 'abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  var bytes = new Uint32Array(16);
+  crypto.getRandomValues(bytes);
+  var out = '';
+  for (var i = 0; i < bytes.length; i++) out += alphabet[bytes[i] % alphabet.length];
+  return out + '!Aa9';
+}
 
 let _api           = null;
 let _database      = '';
@@ -703,16 +744,64 @@ function onFileSelected(e) {
 // ── Parse ─────────────────────────────────────────────────────────────────────
 function processFile(file) {
   var reader = new FileReader();
+  reader.onerror = function () {
+    alert('Could not read "' + file.name + '".\n\nThe file may still be open in Excel, or on a drive that is no longer connected. Close it and try again.');
+  };
   reader.onload = function (e) {
-    var wb = XLSX.read(e.target.result, { type: 'array' });
-    var ws = wb.Sheets['Template'];
-    if (!ws) {
-      alert('Sheet "Template" not found. Make sure you\'re uploading the file from Step 1.');
+    var wb;
+    try {
+      wb = XLSX.read(e.target.result, { type: 'array' });
+    } catch (err) {
+      alert('"' + file.name + '" could not be opened as a spreadsheet.\n\n'
+          + 'Make sure it is the .xlsx file downloaded in Step 1, and that it is not '
+          + 'corrupt or password-protected.\n\nDetails: ' + errText(err));
       return;
     }
-    parseRows(XLSX.utils.sheet_to_json(ws, { defval: '' }));
+    var ws = wb.Sheets['Template'];
+    if (!ws) {
+      alert('No sheet named "Template" in "' + file.name + '".\n\n'
+          + 'Sheets found: ' + (wb.SheetNames.join(', ') || 'none') + '\n\n'
+          + 'Make sure you are uploading the file downloaded in Step 1.');
+      return;
+    }
+    try {
+      parseRows(XLSX.utils.sheet_to_json(ws, { defval: '' }));
+    } catch (err) {
+      alert('The Template sheet could not be read.\n\nDetails: ' + errText(err));
+    }
   };
   reader.readAsArrayBuffer(file);
+}
+
+/** Stable fingerprint of the importable rows, so a saved checkpoint can only be
+ *  offered against the same file it was created from. */
+function rowsFingerprint(list) {
+  var basis = list.filter(function (r) { return r.errors.length === 0; })
+                  .map(function (r) { return (r.email || '').toLowerCase(); })
+                  .join('\n');
+  var h = 5381;
+  for (var i = 0; i < basis.length; i++) h = ((h * 33) ^ basis.charCodeAt(i)) >>> 0;
+  return h.toString(36) + '-' + basis.length;
+}
+
+/** Flag rows sharing a username. Free-form usernames lose the accidental
+ *  uniqueness an email format gives, and MyGeotab rejects the second Add with a
+ *  DuplicateUserException — better to catch it in preview than mid-import. */
+function flagDuplicateUsernames(list) {
+  var seen = {};
+  list.forEach(function (r) {
+    var key = (r.email || '').toLowerCase();
+    if (!key) return;
+    (seen[key] = seen[key] || []).push(r);
+  });
+  Object.keys(seen).forEach(function (key) {
+    var group = seen[key];
+    if (group.length < 2) return;
+    var lines = group.map(function (r) { return r.rowNum - 1; }).join(', ');
+    group.forEach(function (r) {
+      r.errors.push('Duplicate username in file (rows ' + lines + ')');
+    });
+  });
 }
 
 function parseRows(rows) {
@@ -726,9 +815,18 @@ function parseRows(rows) {
   var hasDrvKey  = 'Driver Key'         in sample;
   var hasKeyType = 'Key Type'           in sample;
 
+  // Keep any row carrying data. A row with a name but no username is an error to
+  // report, not something to drop silently. Row numbers are captured before the
+  // filter so they still point at the right line in the user's spreadsheet.
   parsedRows = rows
-    .filter(function (r) { return (r['Email (Login)'] || '').toString().trim(); })
-    .map(function (r, i) {
+    .map(function (r, i) { return { row: r, num: i + 2 }; })
+    .filter(function (w) {
+      return ROW_PRESENCE_FIELDS.some(function (k) {
+        return (w.row[k] || '').toString().trim();
+      });
+    })
+    .map(function (w) {
+      var r = w.row;
       var firstName = (r['First Name']    || '').toString().trim();
       var lastName  = (r['Last Name']     || '').toString().trim();
       var email     = (r['Email (Login)'] || '').toString().trim();
@@ -751,10 +849,18 @@ function parseRows(rows) {
       var driverKeyType = hasKeyType ? (r['Key Type']   || '').toString().trim() || 'Nfc' : 'Nfc';
 
       var errors = [];
-      if (!firstName)           errors.push('First name required');
-      if (!lastName)            errors.push('Last name required');
-      if (!email.includes('@')) errors.push('Invalid email');
-      if (isDriverInvalid)      errors.push('Is Driver must be Yes or No (got: "' + rawIsDriver + '")');
+      if (!firstName) errors.push('First name required');
+      if (!lastName)  errors.push('Last name required');
+      // MyGeotab usernames are free-form strings, not necessarily email addresses.
+      // Drivers are routinely given non-email logins so they receive no Geotab
+      // mail, so the only real requirement here is that the field is filled in.
+      if (!email)     errors.push('Username required');
+      if (isDriverInvalid) errors.push('Is Driver must be Yes or No (got: "' + rawIsDriver + '")');
+      // MyGeotab rejects wrong-length serials with an opaque GenericException
+      // mid-import, so the length is checked here where it can still be fixed.
+      if (driverKey && !VALID_NFC_KEY.test(driverKey)) {
+        errors.push('Driver key must be 8 or 14 hex characters (got ' + driverKey.length + ')');
+      }
 
       var matchedGroup = groupName ? GROUPS.find(function (g) { return g.name === groupName; }) : null;
       if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
@@ -764,10 +870,10 @@ function parseRows(rows) {
       if (!matchedSec) errors.push('Unknown security level: "' + secLabel + '"');
 
       var passwordProvided = !!rawPwd;
-      var finalPassword    = rawPwd || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2) + '!Aa');
+      var finalPassword    = rawPwd || randomPassword();
 
       return {
-        rowNum: i + 2,
+        rowNum: w.num,
         firstName, lastName, email,
         password: finalPassword, passwordProvided,
         isDriver, isDriverInvalid,
@@ -780,12 +886,16 @@ function parseRows(rows) {
       };
     });
 
+  flagDuplicateUsernames(parsedRows);
+
   renderPreview();
 
-  // Check for a saved checkpoint from a previous interrupted import
+  // Check for a saved checkpoint from a previous interrupted import. The
+  // fingerprint must match: a row-count match alone would happily offer to
+  // resume a completely different file that happened to be the same length.
   try {
     var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
-    if (cp && cp.offset > 0 && cp.total === parsedRows.filter(function(r){return r.errors.length===0;}).length) {
+    if (cp && cp.offset > 0 && cp.fingerprint && cp.fingerprint === rowsFingerprint(parsedRows)) {
       var banner = document.getElementById('resumeBanner');
       document.getElementById('resumeMsg').textContent = 'Previous import was interrupted at ' + cp.offset + ' / ' + cp.total + ' users. Resume where it left off?';
       banner.classList.remove('hidden');
@@ -1098,7 +1208,7 @@ function importUsers() {
   function saveCheckpoint(offset) {
     try {
       var pending = toImport.slice(offset).map(function(r) { return r['Email (Login)'] || r.email || ''; });
-      localStorage.setItem('userImport_checkpoint', JSON.stringify({ offset: offset, total: toImport.length, remaining: pending }));
+      localStorage.setItem('userImport_checkpoint', JSON.stringify({ offset: offset, total: toImport.length, remaining: pending, fingerprint: rowsFingerprint(parsedRows) }));
     } catch(e) {}
   }
 
@@ -1136,7 +1246,7 @@ function importUsers() {
         } else {
           r.status = 'done';
           console.log('[UserImport] Add succeeded for', r.email, 'userId:', res);
-          if (typeof res === 'string' && (!r.passwordProvided || r.driverKey)) {
+          if (typeof res === 'string' && !r.passwordProvided) {
             setQueue.push({ userId: res, row: r });
           }
         }
@@ -1154,6 +1264,7 @@ function importUsers() {
         var setCalls = setQueue.map(function (k) {
           var e = buildEntity(k.row);
           delete e.password;
+          delete e.keys;
           e.id = k.userId;
           return ['Set', { typeName: 'User', entity: e }];
         });
@@ -1192,6 +1303,7 @@ function importUsers() {
         if (userId && !r.passwordProvided) {
           var e = buildEntity(r);
           delete e.password;
+          delete e.keys;
           e.id = userId;
           trackApiCall();
           _api.call('Set', { typeName: 'User', entity: e },
@@ -1315,17 +1427,32 @@ function handleRemoveFile(input) {
   var file = input.files[0];
   if (!file) return;
   document.getElementById('removeFileName').textContent = file.name;
+  resetRemoveGate();
   var reader = new FileReader();
+  reader.onerror = function () {
+    alert('Could not read "' + file.name + '".\n\nThe file may still be open in Excel, or on a drive that is no longer connected.');
+  };
   reader.onload = function(e) {
-    var wb  = XLSX.read(e.target.result, { type: 'array' });
-    var ws  = wb.Sheets[wb.SheetNames[0]];
-    var raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    var raw;
+    try {
+      var wb = XLSX.read(e.target.result, { type: 'array' });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      if (!ws) { alert('"' + file.name + '" contains no sheets.'); return; }
+      raw = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    } catch (err) {
+      alert('"' + file.name + '" could not be opened as a spreadsheet.\n\n'
+          + 'Make sure it is a valid .xlsx/.csv file and not corrupt or password-protected.\n\n'
+          + 'Details: ' + errText(err));
+      return;
+    }
+
     var emails = raw.map(function(r) {
       return (r['Email (Login)'] || r['Email'] || r['email'] || '').toString().trim().toLowerCase();
     }).filter(Boolean);
 
     if (!emails.length) {
-      alert('No email addresses found in the file.');
+      alert('No usernames found in "' + file.name + '".\n\n'
+          + 'Expected a column headed "Email (Login)", "Email", or "email".');
       return;
     }
 
@@ -1343,31 +1470,47 @@ function handleRemoveFile(input) {
     });
 
     _api.multiCall(calls, function(responses) {
-      var found = 0;
+      var found = 0, ambiguous = 0;
       _removeRows.forEach(function(row, i) {
-        var res = responses[i];
-        if (res && res.length > 0) {
-          row.userId    = res[0].id;
-          row.firstName = res[0].firstName || '';
-          row.lastName  = res[0].lastName  || '';
+        var res = responses[i] || [];
+        // The user search can return partial matches. Only a single exact
+        // username match may ever be queued for deletion — taking res[0] on
+        // trust is how you delete the wrong person.
+        var exact = res.filter(function (u) {
+          return (u.name || '').toString().trim().toLowerCase() === row.email;
+        });
+        if (exact.length === 1) {
+          row.userId    = exact[0].id;
+          row.firstName = exact[0].firstName || '';
+          row.lastName  = exact[0].lastName  || '';
           row.found     = true;
           found++;
+        } else if (exact.length > 1) {
+          // Shouldn't happen (usernames are unique) but if it does, refuse.
+          row.ambiguous = true;
+          ambiguous++;
         }
       });
 
       document.getElementById('removeFoundCount').textContent    = found;
       document.getElementById('removeNotFoundCount').textContent = _removeRows.length - found;
-      document.getElementById('removeStatus').textContent = '';
-      document.getElementById('btnRemove').disabled = found === 0;
+      document.getElementById('removeStatus').textContent =
+        ambiguous ? ambiguous + ' skipped — more than one exact match' : '';
       document.getElementById('btnRemoveLabel').textContent = 'Remove ' + found + ' User' + (found !== 1 ? 's' : '');
+      prepareRemoveGate(found);
 
       document.getElementById('removePreviewBody').innerHTML = _removeRows.map(function(row) {
-        var statusHtml = row.found
-          ? '<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;">Found</span>'
-          : '<span style="background:#f1f5f9;color:#94a3b8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;">Not found</span>';
+        var statusHtml;
+        if (row.found) {
+          statusHtml = '<span style="background:#fee2e2;color:#dc2626;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;">Will delete</span>';
+        } else if (row.ambiguous) {
+          statusHtml = '<span style="background:#fef9c3;color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;" title="More than one exact match — skipped for safety">Ambiguous</span>';
+        } else {
+          statusHtml = '<span style="background:#f1f5f9;color:#94a3b8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:20px;">Not found</span>';
+        }
         return '<tr class="border-b border-slate-50">'
-          + '<td class="px-3 py-2 text-slate-600">' + row.email + '</td>'
-          + '<td class="px-3 py-2 text-slate-500">' + (row.firstName + ' ' + row.lastName).trim() + '</td>'
+          + '<td class="px-3 py-2 text-slate-600">' + esc(row.email) + '</td>'
+          + '<td class="px-3 py-2 text-slate-500">' + esc((row.firstName + ' ' + row.lastName).trim()) + '</td>'
           + '<td class="px-3 py-2">' + statusHtml + '</td>'
           + '</tr>';
       }).join('');
@@ -1378,41 +1521,97 @@ function handleRemoveFile(input) {
   reader.readAsArrayBuffer(file);
 }
 
+/** What the operator must type to unlock deletion. Normally the database name;
+ *  if the add-in was loaded without one, fall back to a literal word so the
+ *  gate can never silently become a no-op. */
+function removeGateExpected() { return _database || 'DELETE'; }
+
+function removeGateSatisfied() {
+  var typed = (document.getElementById('removeGateInput').value || '').trim();
+  return typed.toLowerCase() === removeGateExpected().toLowerCase();
+}
+
+/** Lock the gate and hide it — used on reset and after a run completes. */
+function resetRemoveGate() {
+  var gate  = document.getElementById('removeGate');
+  var input = document.getElementById('removeGateInput');
+  var btn   = document.getElementById('btnRemove');
+  if (gate)  gate.classList.add('hidden');
+  if (input) input.value = '';
+  if (btn)   btn.disabled = true;
+}
+
+/** Reveal the gate once a lookup has produced deletable rows. */
+function prepareRemoveGate(found) {
+  var gate = document.getElementById('removeGate');
+  document.getElementById('removeGateCount').textContent    = found;
+  document.getElementById('removeGateDb').textContent       = _database || '(unknown database)';
+  document.getElementById('removeGateExpected').textContent = removeGateExpected();
+  document.getElementById('removeGateInput').value          = '';
+  document.getElementById('btnRemove').disabled             = true;
+  if (found > 0) gate.classList.remove('hidden');
+  else           gate.classList.add('hidden');
+}
+
+function onRemoveGateInput() {
+  var any = _removeRows.some(function (r) { return r.found && r.userId; });
+  document.getElementById('btnRemove').disabled = !(any && removeGateSatisfied());
+}
+
 function removeUsers() {
   var toRemove = _removeRows.filter(function(r) { return r.found && r.userId; });
   if (!toRemove.length) return;
 
-  if (!confirm('Remove ' + toRemove.length + ' users from the database? This cannot be undone.')) return;
+  // Belt and braces: the button is disabled until the gate is satisfied, but
+  // never take the button's word for it before an irreversible bulk delete.
+  if (!removeGateSatisfied()) {
+    alert('Type "' + removeGateExpected() + '" in the confirmation box to enable removal.');
+    return;
+  }
 
   document.getElementById('btnRemove').disabled = true;
   document.getElementById('removeProgressWrap').classList.remove('hidden');
 
-  var completed = 0;
+  var succeeded = 0, failed = 0, firstError = '';
   var BATCH = 10;
 
   function updateRemoveProgress() {
-    var pct = Math.round(completed / toRemove.length * 100);
-    document.getElementById('removeProgressLabel').textContent = completed + ' / ' + toRemove.length + ' removed';
-    document.getElementById('removeProgressPct').textContent   = pct + '%';
-    document.getElementById('removeProgressBar').style.width   = pct + '%';
+    var pct = Math.round((succeeded + failed) / toRemove.length * 100);
+    document.getElementById('removeProgressLabel').textContent =
+      succeeded + ' / ' + toRemove.length + ' removed' + (failed ? ' · ' + failed + ' failed' : '');
+    document.getElementById('removeProgressPct').textContent = pct + '%';
+    document.getElementById('removeProgressBar').style.width = pct + '%';
+  }
+
+  function finishRemove() {
+    var bar    = document.getElementById('removeProgressBar');
+    var status = document.getElementById('removeStatus');
+    if (failed) {
+      bar.style.background = '#dc2626';
+      status.textContent = succeeded + ' removed · ' + failed + ' failed'
+                         + (firstError ? ' — ' + firstError : '');
+    } else {
+      bar.style.background = '#16a34a';
+      status.textContent = 'Done — ' + succeeded + ' user' + (succeeded !== 1 ? 's' : '') + ' removed.';
+    }
+    resetRemoveGate();
   }
 
   function nextBatch(offset) {
     var chunk = toRemove.slice(offset, offset + BATCH);
-    if (chunk.length === 0) {
-      document.getElementById('removeStatus').textContent = 'Done — ' + completed + ' users removed.';
-      document.getElementById('removeProgressBar').style.background = '#16a34a';
-      return;
-    }
+    if (chunk.length === 0) { finishRemove(); return; }
     var calls = chunk.map(function(row) {
       return ['Remove', { typeName: 'User', entity: { id: row.userId } }];
     });
     _api.multiCall(calls, function() {
-      completed += chunk.length;
+      succeeded += chunk.length;
       updateRemoveProgress();
       setTimeout(function() { nextBatch(offset + BATCH); }, 500);
     }, function(err) {
-      // Fall back to individual removes on batch failure
+      if (!firstError) firstError = errText(err);
+      // The batch failed as a unit — retry individually so one bad row does not
+      // hide the rest, and record each outcome truthfully rather than counting
+      // every attempt as a success.
       var idx = 0;
       function nextIndividual() {
         if (idx >= chunk.length) {
@@ -1422,8 +1621,16 @@ function removeUsers() {
         }
         var row = chunk[idx++];
         _api.call('Remove', { typeName: 'User', entity: { id: row.userId } },
-          function() { completed++; nextIndividual(); },
-          function()  { completed++; nextIndividual(); }
+          function() {
+            succeeded++; updateRemoveProgress(); nextIndividual();
+          },
+          function(e) {
+            failed++;
+            row.error = errText(e);
+            if (!firstError) firstError = errText(e);
+            updateRemoveProgress();
+            nextIndividual();
+          }
         );
       }
       nextIndividual();

@@ -322,7 +322,9 @@
       <div id="progressWrap" class="hidden mt-3">
         <div class="flex justify-between text-xs text-slate-400 mb-1">
           <span id="progressLabel">0 / 0 processed</span>
-          <span id="progressPct">0% · <span id="apiCallCount">0</span> API calls</span>
+          <!-- The percentage needs its own span. It used to be the outer one,
+               so writing textContent to it deleted the counter nested inside. -->
+          <span><span id="progressPct">0%</span> · <span id="apiCallCount">0</span> API calls</span>
         </div>
         <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
           <div id="progressBar" class="bg-blue-600 h-2 rounded-full" style="width:0%;transition:width 2.4s linear;"></div>
@@ -345,13 +347,20 @@
       <h2 class="font-semibold text-slate-800">Fix Errors Before Importing</h2>
       <span id="fixErrorsBadge" class="text-xs font-semibold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full"></span>
     </div>
-    <p class="text-sm text-slate-400 mb-5 ml-8">Correct the highlighted fields below, then confirm each row. Once all errors are resolved the Import button will unlock.</p>
+    <p class="text-sm text-slate-400 mb-5 ml-8">Correct the highlighted fields below, then confirm each row. Rows stay in this list until you re-check them, so nothing moves while you are still typing. Once all errors are resolved the Import button will unlock.</p>
     <div id="fixErrorsBody" class="space-y-3 ml-8"></div>
-    <div class="mt-5 ml-8">
+    <div class="mt-5 ml-8 flex flex-wrap items-center gap-3">
       <button id="btnFixAll" onclick="confirmAllFixes()"
         class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors">
         Confirm All &amp; Unlock Import
       </button>
+      <button id="btnRecheck" onclick="recheckFixes()"
+        title="Re-runs every check, including the duplicate check across the whole file. Rows with nothing left wrong move out of this list."
+        class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-slate-300 text-slate-600 text-sm font-semibold hover:bg-slate-50 transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Re-check rows
+      </button>
+      <span id="fixResolvedHint" class="text-xs text-slate-400"></span>
     </div>
   </div>
 
@@ -553,6 +562,8 @@ function applyGroupIds(r, ids) {
     .filter(Boolean);
   r.groupIds   = matched.map(function (g) { return g.id; });
   r.groupNames = matched.map(function (g) { return g.label; });
+  // Picking from the live list settles any argument about the Group cell text.
+  r.groupCellErrors = [];
 }
 
 /** Ids chosen in a row's stacked group pickers, in order, without blanks or
@@ -585,6 +596,17 @@ let GROUP_PARENT   = {};   // childGroupId -> parentGroupId, for hierarchy check
 let VEHICLES       = [];
 let parsedRows     = [];
 let _importing     = false;
+
+// ── Fix panel state ───────────────────────────────────────────────────────────
+// _fixEditing : rowNum -> true while that row's name/username fields are unlocked
+// _fixDraft   : rowNum -> typed but unsaved values, so a re-render caused by
+//               another row cannot throw away what is half typed here
+// _fixKeep    : rowNum -> true for every row the panel has shown. Rows leave the
+//               panel only on Re-check, never on their own, so the list cannot
+//               reshuffle underneath someone who is still working through it.
+let _fixEditing = {};
+let _fixDraft   = {};
+let _fixKeep    = {};
 let templateConfig = { userType: null, selectedFields: [], driverKeyType: 'Nfc' };
 let _refLoadCount  = 0;
 
@@ -1020,9 +1042,45 @@ function flagDuplicateUsernames(list) {
     if (group.length < 2) return;
     var lines = group.map(function (r) { return r.rowNum - 1; }).join(', ');
     group.forEach(function (r) {
+      // A row that has already been created still owns the username, so it keeps
+      // its place in the clash, but it is finished and gets no new error badge.
+      if (r.status === 'done' || r.status === 'duplicate') return;
       r.errors.push('Duplicate username in file (rows ' + lines + ')');
     });
   });
+}
+
+/** Every check parseRows applies, redone from the values currently on the row.
+ *  Editing a name or a username has to be able to clear an error and to raise a
+ *  new one, so the checks cannot stay welded to the original parse.
+ *
+ *  The one thing not recomputed is the group cell: the text the user typed in
+ *  Excel is gone by this point, so a "no such group" complaint is carried on the
+ *  row as groupCellErrors and cleared only when they pick a real group. */
+function validateRow(r) {
+  var errors = [];
+  if (!r.firstName) errors.push('First name required');
+  if (!r.lastName)  errors.push('Last name required');
+  if (!r.email)     errors.push('Username required');
+  if (r.isDriverInvalid) errors.push('Is Driver must be Yes or No');
+  if (r.driverKey && !VALID_NFC_KEY.test(r.driverKey)) {
+    errors.push('Driver key must be 8 or 14 hex characters (got ' + r.driverKey.length + ')');
+  }
+  (r.groupCellErrors || []).forEach(function (e) { errors.push(e); });
+  findGroupConflicts(r.groupIds).forEach(function (e) { errors.push(e); });
+  if (!r.secId) errors.push('Unknown security level: "' + r.secLabel + '"');
+  return errors;
+}
+
+/** Re-run every row's own checks and then the cross-row duplicate check.
+ *  Whole-file, because renaming one username can just as easily create a clash
+ *  somewhere else as clear the one it was meant to fix. */
+function revalidateAll() {
+  parsedRows.forEach(function (r) {
+    if (r.status === 'done' || r.status === 'duplicate') { r.errors = []; return; }
+    r.errors = validateRow(r);
+  });
+  flagDuplicateUsernames(parsedRows);
 }
 
 function parseRows(rows) {
@@ -1099,6 +1157,13 @@ function parseRows(rows) {
         password: finalPassword, passwordProvided,
         isDriver, isDriverInvalid,
         groupNames: groupInfo.names, groupIds: groupInfo.ids,
+        // Kept so a later revalidation can repeat a complaint about the Group
+        // cell without re-reading a spreadsheet that is no longer in memory.
+        // Hierarchy clashes are filtered out: validateRow recomputes those from
+        // the ids, and keeping them here too would print each one twice.
+        groupCellErrors: groupInfo.errors.filter(function (e) {
+          return findGroupConflicts(groupInfo.ids).indexOf(e) === -1;
+        }),
         secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
         employeeNo, phone, comment, driverKey, driverKeyType,
         hasDrv, hasGrp, hasPwd, hasEmp, hasPhone, hasCmt, hasDrvKey,
@@ -1109,6 +1174,9 @@ function parseRows(rows) {
 
   flagDuplicateUsernames(parsedRows);
 
+  // A new file starts with a clean panel: no rows held open, no stale drafts.
+  _fixEditing = {}; _fixDraft = {}; _fixKeep = {};
+
   renderPreview();
 
   // Check for a saved checkpoint from a previous interrupted import. The
@@ -1116,9 +1184,11 @@ function parseRows(rows) {
   // resume a completely different file that happened to be the same length.
   try {
     var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
-    if (cp && cp.offset > 0 && cp.fingerprint && cp.fingerprint === rowsFingerprint(parsedRows)) {
+    if (cp && cp.remaining && cp.remaining.length < cp.total && cp.fingerprint
+        && cp.fingerprint === rowsFingerprint(parsedRows)) {
       var banner = document.getElementById('resumeBanner');
-      document.getElementById('resumeMsg').textContent = 'Previous import was interrupted at ' + cp.offset + ' / ' + cp.total + ' users. Resume where it left off?';
+      document.getElementById('resumeMsg').textContent = 'Previous import was interrupted at '
+        + (cp.total - cp.remaining.length) + ' / ' + cp.total + ' users. Resume where it left off?';
       banner.classList.remove('hidden');
     }
   } catch(e) {}
@@ -1127,14 +1197,15 @@ function parseRows(rows) {
 function resumeImport() {
   try {
     var cp = JSON.parse(localStorage.getItem('userImport_checkpoint') || 'null');
-    if (!cp) return;
-    // Mark already-processed rows as done so they are skipped
-    var processed = cp.total - cp.remaining.length;
-    var idx = 0;
+    if (!cp || !cp.remaining) return;
+    // Matched by email rather than by position. Lanes finish out of order, so
+    // "the first N rows are done" stopped being true the moment imports ran
+    // concurrently — only the checkpoint's own list of unresolved emails knows.
+    var stillPending = {};
+    cp.remaining.forEach(function (e) { stillPending[e] = true; });
     parsedRows.forEach(function(r) {
-      if (r.errors.length === 0 && r.status === 'pending') {
-        if (idx < processed) { r.status = 'done'; }
-        idx++;
+      if (r.errors.length === 0 && r.status === 'pending' && !stillPending[r.email]) {
+        r.status = 'done';
       }
     });
     renderPreview();
@@ -1143,7 +1214,15 @@ function resumeImport() {
 }
 
 // ── Preview ───────────────────────────────────────────────────────────────────
-function renderPreview() {
+
+/** Repaint the preview table and the counters, leaving the Fix panel alone.
+ *  Saving one row must not rebuild the panel: that would pull rows out from
+ *  under someone still working, and reset every unconfirmed dropdown. */
+function renderPreviewTableOnly() {
+  renderPreview(true);
+}
+
+function renderPreview(skipFixPanel) {
   if (parsedRows.length === 0) return;
 
   var f = parsedRows[0];
@@ -1214,7 +1293,7 @@ function renderPreview() {
     document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
   }
 
-  renderFixErrors();
+  if (!skipFixPanel) renderFixErrors();
 }
 
 // ── Fix Errors panel ──────────────────────────────────────────────────────────
@@ -1258,17 +1337,208 @@ function removeFixGroupRow(btn) {
   }
 }
 
+// ── Inline name and username editing ─────────────────────────────────────────
+// A duplicate username has no dropdown that can fix it, so these two fields are
+// editable. They are behind a gate rather than always-on because the panel is
+// mostly read as a list of complaints, and text boxes everywhere invite typos
+// in rows nobody meant to touch.
+
+/** What a row's editor should show: typed text if there is any, else the row. */
+function fixFieldValues(r) {
+  var d = _fixDraft[r.rowNum];
+  return d ? d : { firstName: r.firstName, lastName: r.lastName, email: r.email };
+}
+
+/** Lift unsaved text out of every open editor before the panel is rebuilt.
+ *  Confirming a different row rebuilds the whole panel, and without this it
+ *  would take half-typed corrections with it. */
+function captureFixDrafts() {
+  Object.keys(_fixEditing).forEach(function (rowNum) {
+    var first = document.getElementById('fixFirst_' + rowNum);
+    if (!first) return;
+    var last  = document.getElementById('fixLast_'  + rowNum);
+    var email = document.getElementById('fixEmail_' + rowNum);
+    _fixDraft[rowNum] = {
+      firstName: first.value,
+      lastName:  last  ? last.value  : '',
+      email:     email ? email.value : ''
+    };
+  });
+}
+
+function startFixEdit(rowNum) {
+  _fixEditing[rowNum] = true;
+  repaintFixIdentity(rowNum);
+  var first = document.getElementById('fixFirst_' + rowNum);
+  if (first) { first.focus(); first.select(); }
+}
+
+function cancelFixEdit(rowNum) {
+  delete _fixEditing[rowNum];
+  delete _fixDraft[rowNum];
+  repaintFixIdentity(rowNum);
+}
+
+/** Commit the typed values, then re-run every check across the whole file.
+ *  Whole file because a rename settles one clash and can open another, and the
+ *  row it opens may be one that currently looks fine. */
+function saveFixIdentity(rowNum) {
+  var r = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (!r) return;
+  var first = document.getElementById('fixFirst_' + rowNum);
+  var last  = document.getElementById('fixLast_'  + rowNum);
+  var email = document.getElementById('fixEmail_' + rowNum);
+
+  if (first) r.firstName = first.value.trim();
+  if (last)  r.lastName  = last.value.trim();
+  if (email) r.email     = email.value.trim();
+
+  delete _fixEditing[rowNum];
+  delete _fixDraft[rowNum];
+
+  revalidateAll();
+  // Repaint in place rather than rebuilding: a row that has just become clean
+  // must not vanish mid-edit, and every other row's message may have changed
+  // because this username moved.
+  refreshFixMessages();
+  renderPreviewTableOnly();
+}
+
+/** Enter saves, Escape cancels. Faster than reaching for the button on a file
+ *  with a long list of duplicates to work through. */
+function onFixIdentityKey(e, rowNum) {
+  if (e.key === 'Enter')  { e.preventDefault(); saveFixIdentity(rowNum); }
+  if (e.key === 'Escape') { e.preventDefault(); cancelFixEdit(rowNum); }
+}
+
+function fixStatusLine(r) {
+  if (r.errors.length > 0) {
+    return '<p class="text-xs text-amber-600 mt-1">' + esc(r.errors.join(' · ')) + '</p>';
+  }
+  return '<p class="text-xs text-emerald-600 mt-1 font-medium">&#x2713; Nothing left to fix on this row. Re-check rows to move it into the import.</p>';
+}
+
+/** Name and username, either read-only behind an Edit button or unlocked. */
+function fixIdentityHtml(r) {
+  if (!_fixEditing[r.rowNum]) {
+    return '<div class="flex items-start gap-2">'
+      +   '<div class="min-w-0">'
+      +     '<p class="text-sm font-medium text-slate-700">' + esc((r.firstName + ' ' + r.lastName).trim() || '(no name)') + '</p>'
+      +     '<p class="text-xs text-slate-400">' + esc(r.email || '(no username)') + '</p>'
+      +   '</div>'
+      +   '<button type="button" onclick="startFixEdit(' + r.rowNum + ')" title="Unlock the name and username on this row" '
+      +     'class="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:border-blue-400 hover:text-blue-600 transition-colors">'
+      +     '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit'
+      +   '</button>'
+      + '</div>'
+      + fixStatusLine(r);
+  }
+
+  var v   = fixFieldValues(r);
+  var inp = 'text-xs border border-blue-300 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400';
+  function field(id, label, value, width) {
+    return '<div class="flex flex-col gap-1">'
+      + '<span class="text-xs text-slate-400">' + label + '</span>'
+      + '<input id="' + id + '_' + r.rowNum + '" type="text" value="' + esc(value) + '" '
+      +   'onkeydown="onFixIdentityKey(event,' + r.rowNum + ')" class="' + inp + ' ' + width + '">'
+      + '</div>';
+  }
+
+  return '<div class="flex flex-wrap items-end gap-1.5">'
+    +   field('fixFirst', 'First name', v.firstName, 'w-28')
+    +   field('fixLast',  'Last name',  v.lastName,  'w-28')
+    +   field('fixEmail', 'Username',   v.email,     'w-64')
+    +   '<button type="button" onclick="saveFixIdentity(' + r.rowNum + ')" '
+    +     'class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
+    +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>Save'
+    +   '</button>'
+    +   '<button type="button" onclick="cancelFixEdit(' + r.rowNum + ')" '
+    +     'class="inline-flex items-center px-2 py-1.5 rounded-lg text-slate-400 text-xs font-semibold hover:text-slate-600 transition-colors">Cancel</button>'
+    + '</div>'
+    + fixStatusLine(r);
+}
+
+function repaintFixIdentity(rowNum) {
+  var host = document.getElementById('fixIdent_' + rowNum);
+  var r    = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (!host || !r) return;
+  host.innerHTML = fixIdentityHtml(r);
+
+  // Amber while something is wrong, green once nothing is. The row keeps its
+  // place either way; the colour is the only thing that moves.
+  var rowEl = document.getElementById('fixRow_' + rowNum);
+  if (rowEl) {
+    var bad = r.errors.length > 0;
+    rowEl.classList.toggle('border-amber-100',   bad);
+    rowEl.classList.toggle('bg-amber-50/40',     bad);
+    rowEl.classList.toggle('border-emerald-100', !bad);
+    rowEl.classList.toggle('bg-emerald-50/40',   !bad);
+  }
+}
+
+/** Repaint every row's identity block and the counters around the panel,
+ *  leaving the dropdowns and their unconfirmed picks exactly where they are. */
+function refreshFixMessages() {
+  captureFixDrafts();
+  Object.keys(_fixKeep).forEach(function (rowNum) { repaintFixIdentity(Number(rowNum)); });
+  updateFixCounters();
+}
+
+function updateFixCounters() {
+  var shown    = parsedRows.filter(function (r) { return _fixKeep[r.rowNum] && r.status !== 'done'; });
+  var stillBad = shown.filter(function (r) { return r.errors.length > 0; }).length;
+  var resolved = shown.length - stillBad;
+
+  var badge = document.getElementById('fixErrorsBadge');
+  if (badge) badge.textContent = stillBad + ' row' + (stillBad !== 1 ? 's' : '') + ' need attention';
+
+  var hint = document.getElementById('fixResolvedHint');
+  if (hint) {
+    hint.textContent = resolved > 0
+      ? resolved + ' row' + (resolved !== 1 ? 's' : '') + ' ready to move out'
+      : '';
+  }
+
+  var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
+  if (!_importing) {
+    document.getElementById('btnImport').disabled = importable === 0;
+    document.getElementById('btnImportLabel').textContent = 'Import ' + importable + ' User' + (importable !== 1 ? 's' : '');
+  }
+}
+
+/** Re-run everything and let the resolved rows go. The only route out of the
+ *  panel: rows never leave on their own, so the list cannot renumber itself
+ *  under someone who is halfway down it. */
+function recheckFixes() {
+  revalidateAll();
+  _fixKeep = {};
+  renderPreview();
+}
+
 function renderFixErrors() {
-  var errored = parsedRows.filter(function (r) { return r.errors.length > 0 && r.status !== 'done'; });
+  captureFixDrafts();
+
+  // Rows stay listed once they have been listed, even after they come clean, so
+  // the panel holds still while it is being worked through. Re-check empties
+  // _fixKeep and the resolved ones drop out then.
+  var errored = parsedRows.filter(function (r) {
+    return r.status !== 'done' && r.status !== 'duplicate'
+        && (r.errors.length > 0 || _fixKeep[r.rowNum]);
+  });
   var section = document.getElementById('fixErrorsSection');
 
   if (errored.length === 0) {
     section.classList.add('hidden');
+    _fixKeep = {}; _fixEditing = {}; _fixDraft = {};
     return;
   }
 
+  // Rebuilt from scratch, not added to, so a row that has since been imported
+  // cannot linger in the set and keep an empty slot open.
+  _fixKeep = {};
+  errored.forEach(function (r) { _fixKeep[r.rowNum] = true; });
+
   section.classList.remove('hidden');
-  document.getElementById('fixErrorsBadge').textContent = errored.length + ' row' + (errored.length !== 1 ? 's' : '') + ' need attention';
 
   var secOptions = SECURITY_LEVELS.map(function (s) {
     return '<option value="' + s.id + '">' + s.label + '</option>';
@@ -1301,12 +1571,9 @@ function renderFixErrors() {
           + '</select>'
       : '';
 
-    return '<div id="fixRow_' + r.rowNum + '" class="flex flex-wrap items-center gap-3 p-4 rounded-xl border border-amber-100 bg-amber-50/40">'
-      + '<div class="min-w-0 flex-1">'
-      +   '<p class="text-sm font-medium text-slate-700">' + esc(r.firstName + ' ' + r.lastName) + '</p>'
-      +   '<p class="text-xs text-slate-400">' + esc(r.email) + '</p>'
-      +   '<p class="text-xs text-amber-600 mt-0.5">' + esc(r.errors.join(' · ')) + '</p>'
-      + '</div>'
+    return '<div id="fixRow_' + r.rowNum + '" class="flex flex-wrap items-center gap-3 p-4 rounded-xl border '
+      + (r.errors.length > 0 ? 'border-amber-100 bg-amber-50/40' : 'border-emerald-100 bg-emerald-50/40') + '">'
+      + '<div id="fixIdent_' + r.rowNum + '" class="min-w-0 flex-1">' + fixIdentityHtml(r) + '</div>'
       + '<div class="flex flex-wrap items-center gap-2">'
       +   (r.hasDrv ? '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Is Driver</span>' + drvSel + '</div>' : '')
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Security Level</span>' + secSel + '</div>'
@@ -1320,6 +1587,19 @@ function renderFixErrors() {
       + '</div>'
       + '</div>';
   }).join('');
+
+  updateFixCounters();
+}
+
+/** Read this row's dropdowns onto the row. Shared by Confirm and Confirm All so
+ *  the two cannot drift apart. */
+function applyFixControls(r, secVal, grpVals, drvVal) {
+  if (secVal) {
+    var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === secVal; });
+    if (matchedSec) { r.secId = matchedSec.id; r.secLabel = matchedSec.label; }
+  }
+  if (grpVals !== null && grpVals !== undefined) applyGroupIds(r, grpVals);
+  if (drvVal !== null && drvVal !== undefined) { r.isDriver = drvVal === 'yes'; r.isDriverInvalid = false; }
 }
 
 function confirmFix(rowNum) {
@@ -1328,29 +1608,14 @@ function confirmFix(rowNum) {
 
   var secEl = document.getElementById('fixSec_' + rowNum);
   var drvEl = document.getElementById('fixDrv_' + rowNum);
+  applyFixControls(r, secEl ? secEl.value : null, readFixGroups(rowNum), drvEl ? drvEl.value : null);
 
-  var newSecId  = secEl ? secEl.value : r.secId;
-  var newGrpIds = readFixGroups(rowNum);
-
-  var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === newSecId; });
-
-  r.secId    = matchedSec ? matchedSec.id    : r.secId;
-  r.secLabel = matchedSec ? matchedSec.label : r.secLabel;
-  if (newGrpIds) applyGroupIds(r, newGrpIds);
-  if (drvEl) { r.isDriver = drvEl.value === 'yes'; r.isDriverInvalid = false; }
-  // Re-check rather than blanket-clear: a parent/child pair picked here would
-  // otherwise sail through and be rejected by the API mid-import.
-  r.errors   = findGroupConflicts(r.groupIds);
-  if (r.errors.length > 0) { renderPreview(); return; }
-
-  var rowEl = document.getElementById('fixRow_' + rowNum);
-  if (rowEl) {
-    rowEl.style.transition = 'opacity 0.2s';
-    rowEl.style.opacity = '0';
-    setTimeout(function () { renderPreview(); }, 220);
-  } else {
-    renderPreview();
-  }
+  // Full revalidation, not just the group conflicts. Clearing every other
+  // complaint here was letting a duplicate username through the panel and into
+  // the import, where MyGeotab rejected it.
+  revalidateAll();
+  refreshFixMessages();
+  renderPreviewTableOnly();
 }
 
 /** Resolve a hierarchy clash by dropping the redundant descendant group. */
@@ -1358,33 +1623,35 @@ function keepParentOnly(rowNum) {
   var r = parsedRows.find(function (p) { return p.rowNum === rowNum; });
   if (!r) return;
   applyGroupIds(r, collapseRedundantGroups(r.groupIds));
-  r.errors = findGroupConflicts(r.groupIds);
+  revalidateAll();
   renderPreview();
 }
 
 function confirmAllFixes() {
+  // Any editor still open counts as intended: Confirm All should not quietly
+  // drop a username someone typed but did not press Save on.
+  Object.keys(_fixEditing).forEach(function (rowNum) { saveFixIdentity(Number(rowNum)); });
+
   // Snapshot all values before any DOM changes
-  var fixes = parsedRows.filter(function (r) { return r.errors.length > 0; }).map(function (r) {
-    var secEl = document.getElementById('fixSec_' + r.rowNum);
-    var drvEl = document.getElementById('fixDrv_' + r.rowNum);
-    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVals: readFixGroups(r.rowNum), drvVal: drvEl ? drvEl.value : null };
+  var fixes = Object.keys(_fixKeep).map(function (rowNum) {
+    var secEl = document.getElementById('fixSec_' + rowNum);
+    var drvEl = document.getElementById('fixDrv_' + rowNum);
+    return { rowNum: Number(rowNum), secVal: secEl ? secEl.value : null, grpVals: readFixGroups(rowNum), drvVal: drvEl ? drvEl.value : null };
   });
   fixes.forEach(function (fix) {
     var r = parsedRows.find(function (p) { return p.rowNum === fix.rowNum; });
-    if (!r) return;
-    if (fix.secVal) {
-      var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === fix.secVal; });
-      if (matchedSec) { r.secId = matchedSec.id; r.secLabel = matchedSec.label; }
-    }
-    if (fix.grpVals !== null) applyGroupIds(r, fix.grpVals);
-    if (fix.drvVal !== null) { r.isDriver = fix.drvVal === 'yes'; r.isDriverInvalid = false; }
-    r.errors = findGroupConflicts(r.groupIds);
+    if (r) applyFixControls(r, fix.secVal, fix.grpVals, fix.drvVal);
   });
+  // Same as Confirm: everything is rechecked, and rows that are still wrong stay
+  // in the panel rather than being declared fixed.
+  revalidateAll();
+  _fixKeep = {};
   renderPreview();
 }
 
 function clearFile() {
   parsedRows = [];
+  _fixEditing = {}; _fixDraft = {}; _fixKeep = {};
   try { localStorage.removeItem('userImport_checkpoint'); } catch(e) {}
   document.getElementById('resumeBanner').classList.add('hidden');
   document.getElementById('progressWrap').classList.add('hidden');
@@ -1452,49 +1719,100 @@ function importUsers() {
   var _heartbeat = setInterval(function() {
     trackApiCall();
     chargeCalls(1);
-    _api.call('GetVersion', {}, function() {}, function() {});
+    // Also the cheapest way to refresh the server's rate figure while a long
+    // batch is in flight and nothing else is coming back.
+    _api.call('GetVersion', {}, function (ok) { noteRateLimit(ok); }, function (err) { noteRateLimit(err); });
   }, 10000);
 
   var completed = 0;
 
   // ── Adaptive pacing ─────────────────────────────────────────────────────────
-  // How long a user takes to write varies hugely by database, so batch size is
-  // measured rather than assumed. Each batch is timed, the cost per user is
-  // taken from it, and the next batch is sized to land near TARGET_BATCH_MS.
-  // A fixed size was tried first and was wrong in both directions: too large on
-  // a slow database (minutes of dead progress bar) and needlessly small on a
-  // fast one.
+  // Batch size is only about how often the progress bar moves. Measured against
+  // a live database, cost is per user and strictly linear: a batch of 1 took
+  // 6258ms, of 2 took 13070ms, of 3 took 18554ms. The server writes users one
+  // after another inside a request, so a bigger batch saves nothing but round
+  // trips. It no longer protects anything either, now that requestIndex tells
+  // us exactly where a failed batch stopped. So size for a readable cadence.
   var MIN_BATCH    = 1;
   var MAX_BATCH    = 50;
-  var START_BATCH  = 10;
-  // A ceiling, not a target. On a slow database the wall time is set by the
-  // server's per-user cost, so shrinking batches there buys nothing and only
-  // adds round trips — the size is grown while batches succeed and pulled back
-  // only when one runs past this, which bounds both the dead time on the
-  // progress bar and how much work a single failed batch puts at risk.
-  var MAX_BATCH_MS = 45000;
+  var START_BATCH  = 5;
+  var PROGRESS_CADENCE_MS = 12000;
   var batchSize    = START_BATCH;
   var msPerUser    = null;   // null until the first batch has been timed
 
-  // Rate budget. A multiCall of N is charged as N here, which is the safe
-  // reading — if MyGeotab in fact charges it as one request we have only ever
-  // been slower than necessary, never throttled. Verify before relaxing this.
+  // Concurrency. Measured against a live database: four simultaneous Adds
+  // returned in 5819/5873/5903/5853ms against a 6004ms single Add, so 4.07x
+  // with no per-lane slowdown at all. The server does not serialise concurrent
+  // writes from one session. Six rather than eight because six is the browser's
+  // per-host connection cap under HTTP/1.1, beyond which the extra lanes would
+  // queue in the browser and buy nothing. Raise this only with a fresh
+  // measurement, and mind the rate budget: lanes x 2 calls per user per
+  // round has to stay under RATE_LIMIT_PER_MIN.
+  var LANES = 6;
+
+  // Rate budget. Responses carry the server's own figure:
+  //   rateLimit: { limit: 60, remaining: 230, reset: "2026-08-18T20:06:33Z" }
+  // where limit is the window in seconds and remaining counts down within it.
+  // That is authoritative, so it is used whenever it has been seen and is still
+  // inside its window. The rolling tally below is only the fallback for the
+  // stretch before the first response arrives, or if the field ever disappears.
   var RATE_LIMIT_PER_MIN = 250;
+  // Headroom left untouched so the heartbeat and any retry always have room.
+  var RATE_RESERVE = 20;
   // Worst case a user costs two calls: the Add, then the Set that triggers the
-  // password prompt. Reserving for one was a real breach — a simulated fast
-  // database peaked at 260 calls in a 60s window against a limit of 250.
+  // password prompt.
   var CALLS_PER_USER = 2;
-  var _callTimes = [];
+  var _callTimes    = [];
+  var _srvRemaining = null;   // null until a response has told us
+  var _srvReset     = null;   // epoch ms at which remaining goes back to full
+
+  /** Pull rateLimit out of a response or error payload wherever it is nested.
+   *  The shape differs between the success and failure paths, so this looks
+   *  rather than assumes. Depth-capped because error payloads echo the whole
+   *  failed request back and are deep. */
+  function noteRateLimit(obj, depth) {
+    depth = depth || 0;
+    if (!obj || typeof obj !== 'object' || depth > 6) return;
+    var rl = obj.rateLimit;
+    if (rl && typeof rl.remaining === 'number') {
+      var reset = rl.reset ? Date.parse(rl.reset) : NaN;
+      // Ignore a stale echo: only move forward, never back to an older window.
+      if (!isNaN(reset) && (_srvReset === null || reset >= _srvReset)) {
+        _srvRemaining = rl.remaining;
+        _srvReset     = reset;
+      }
+      return;
+    }
+    for (var k in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, k)) noteRateLimit(obj[k], depth + 1);
+    }
+  }
 
   function chargeCalls(n) {
     var now = Date.now();
     for (var i = 0; i < n; i++) _callTimes.push(now);
+    // Keep the server figure current between observations, otherwise it goes
+    // stale the moment we send anything and we spend budget we no longer have.
+    if (_srvRemaining !== null) _srvRemaining -= n;
   }
 
-  /** Milliseconds to hold off before charging n more calls, so the rolling
-   *  60-second window never exceeds the limit. Zero whenever there is room. */
+  /** Milliseconds to hold off before charging n more calls. Zero whenever
+   *  there is room, which on a real database is nearly always. */
   function rateDelayFor(n) {
     var now = Date.now();
+
+    // Never ask for more than a whole window can hold. Without this a request
+    // larger than the limit can never be satisfied, so the caller waits out a
+    // full reset every round and then does it again: a fast database measured
+    // 780s for 200 users, slower than the 6-second-per-user one.
+    n = Math.min(n, RATE_LIMIT_PER_MIN - RATE_RESERVE);
+
+    if (_srvRemaining !== null && _srvReset !== null) {
+      if (_srvReset <= now) return 0;                       // window rolled over
+      if (_srvRemaining - n > RATE_RESERVE) return 0;       // room to spare
+      return (_srvReset - now) + 50;                        // wait for the reset
+    }
+
     while (_callTimes.length > 0 && now - _callTimes[0] > 60000) _callTimes.shift();
     var over = _callTimes.length + n - RATE_LIMIT_PER_MIN;
     if (over <= 0) return 0;
@@ -1502,23 +1820,18 @@ function importUsers() {
     return Math.max(0, 60000 - (now - oldest) + 50);
   }
 
-  /** Resize from the cost per user just observed. Grow while batches come back
-   *  clean and inside the ceiling, halve whenever one is rejected outright. */
-  function retuneBatch(users, elapsedMs, failed) {
-    if (failed) {
-      batchSize = Math.max(MIN_BATCH, Math.floor(batchSize / 2));
-      return;
-    }
+  /** Resize from the cost per user just observed, aiming for one progress
+   *  update every PROGRESS_CADENCE_MS. There is deliberately no penalty for a
+   *  failed batch: the previous version halved on every failure, and since a
+   *  single duplicate row rejects the whole batch, one file with 28 duplicates
+   *  collapsed the size to 1 and kept it there for the rest of the run. */
+  function retuneBatch(users, elapsedMs) {
     if (users <= 0 || elapsedMs <= 0) return;
     var observed = elapsedMs / users;
     // Smooth across batches so one blip does not dominate.
     msPerUser = msPerUser === null ? observed : (msPerUser * 0.6 + observed * 0.4);
-
-    var ceiling = Math.max(MIN_BATCH, Math.floor(MAX_BATCH_MS / msPerUser));
-    var want = elapsedMs > MAX_BATCH_MS
-      ? ceiling                                  // overran — pull back to fit
-      : Math.min(ceiling, batchSize * 2);        // healthy — double, up to the ceiling
-    batchSize = Math.max(MIN_BATCH, Math.min(MAX_BATCH, want));
+    batchSize = Math.max(MIN_BATCH, Math.min(MAX_BATCH,
+      Math.round(PROGRESS_CADENCE_MS / msPerUser)));
   }
 
   var _importStart = Date.now();
@@ -1539,8 +1852,9 @@ function importUsers() {
   function updateProgress() {
     var total = toImport.length;
     var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
-    // Animate bar toward the next batch's percentage so it glides continuously
-    var nextCompleted = Math.min(completed + batchSize, total);
+    // Animate the bar toward where the work currently in flight will land, so
+    // it glides rather than steps. That is one batch per lane, not one batch.
+    var nextCompleted = Math.min(completed + batchSize * LANES, total);
     var nextPct = total > 0 ? Math.round(nextCompleted / total * 100) : 0;
     document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' processed';
     document.getElementById('progressPct').textContent   = pct + '%';
@@ -1548,10 +1862,19 @@ function importUsers() {
     updateStatus();
   }
 
-  function saveCheckpoint(offset) {
+  /** Records which rows are still unresolved, not how far a pointer got. With
+   *  lanes running concurrently there is no single watermark to record, and a
+   *  row in flight counts as unresolved: resuming would retry it and get an
+   *  "already exists", which is the harmless direction to be wrong in. */
+  function saveCheckpoint() {
     try {
-      var pending = toImport.slice(offset).map(function(r) { return r['Email (Login)'] || r.email || ''; });
-      localStorage.setItem('userImport_checkpoint', JSON.stringify({ offset: offset, total: toImport.length, remaining: pending, fingerprint: rowsFingerprint(parsedRows) }));
+      var pending = toImport.filter(function (r) { return r.status === 'pending'; })
+                            .map(function (r) { return r.email || ''; });
+      localStorage.setItem('userImport_checkpoint', JSON.stringify({
+        total: toImport.length,
+        remaining: pending,
+        fingerprint: rowsFingerprint(parsedRows)
+      }));
     } catch(e) {}
   }
 
@@ -1560,11 +1883,116 @@ function importUsers() {
     document.getElementById('resumeBanner').classList.add('hidden');
   }
 
-  function nextBatch(offset) {
-    var chunk = toImport.slice(offset, offset + batchSize);
-    if (chunk.length === 0) { finish(); return; }
+  function errMessage(err) {
+    if (typeof err === 'string') return err;
+    return (err && err.message) || JSON.stringify(err);
+  }
 
-    saveCheckpoint(offset);
+  /** MyGeotab names the failing call in the rejection payload:
+   *    "data": { "type": "DuplicateUserException", "requestIndex": 0 }
+   *  multiCall is fail-fast and not transactional, so every call before that
+   *  index was committed and every call after it was never attempted. Knowing
+   *  which is which is the difference between resuming and re-adding the lot. */
+  function extractRequestIndex(obj, depth) {
+    depth = depth || 0;
+    if (!obj || typeof obj !== 'object' || depth > 6) return null;
+    if (typeof obj.requestIndex === 'number') return obj.requestIndex;
+    for (var k in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+      var hit = extractRequestIndex(obj[k], depth + 1);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+
+  /** Rows before the failing index exist now, but the rejection carries no ids
+   *  for them, so the ones still owed a password prompt have to be looked up.
+   *  Two calls for the whole prefix, against one Add per row if we re-sent the
+   *  chunk blindly (which also badged real creations as "already exists"). */
+  function recoverPrefix(rows, done) {
+    var needSet = rows.filter(function (r) { return !r.passwordProvided; });
+    if (needSet.length === 0) { done(); return; }
+
+    var gets = needSet.map(function (r) {
+      return ['Get', { typeName: 'User', search: { name: r.email } }];
+    });
+    trackApiCall();
+    chargeCalls(gets.length);
+    _api.multiCall(gets, function (found) {
+      noteRateLimit(found);
+      var sets = [];
+      needSet.forEach(function (r, i) {
+        var hit = found && found[i] && found[i][0];
+        if (!hit || !hit.id) {
+          console.warn('[UserImport] no id for', r.email, '- password prompt not sent');
+          return;
+        }
+        var e = buildEntity(r);
+        delete e.password;
+        delete e.keys;
+        e.id = hit.id;
+        sets.push(['Set', { typeName: 'User', entity: e }]);
+      });
+      if (sets.length === 0) { done(); return; }
+      trackApiCall();
+      chargeCalls(sets.length);
+      _api.multiCall(sets, function (ok) { noteRateLimit(ok); done(); }, function (err) {
+        noteRateLimit(err);
+        console.warn('[UserImport] prefix Set failed:', errMessage(err));
+        done();
+      });
+    }, function (err) {
+      noteRateLimit(err);
+      console.warn('[UserImport] prefix lookup failed:', errMessage(err));
+      done();
+    });
+  }
+
+  // ── Lane scheduler ──────────────────────────────────────────────────────────
+  // Lanes pull from one shared cursor rather than owning a slice each, so a
+  // lane that hits a slow chunk does not leave its share unstarted while the
+  // others idle. requeue holds rows pulled back from a partially applied batch
+  // and is drained first, so nothing overtakes a row that has already waited.
+  var cursor      = 0;
+  var requeue     = [];
+  var activeLanes = 0;
+  var finished    = false;
+
+  function claimChunk() {
+    if (requeue.length > 0) return requeue.splice(0, batchSize);
+    if (cursor >= toImport.length) return null;
+    var start = cursor;
+    cursor = Math.min(toImport.length, cursor + batchSize);
+    return toImport.slice(start, cursor);
+  }
+
+  function pump() {
+    var chunk = claimChunk();
+    if (!chunk || chunk.length === 0) {
+      activeLanes--;
+      if (activeLanes === 0 && !finished) { finished = true; finish(); }
+      return;
+    }
+    runChunk(chunk, function () {
+      // Reserve for this lane's next batch only. The budget is one shared
+      // counter, so six lanes each checking their own batch against it already
+      // throttles the group. Reserving the whole fleet's worth per lane was
+      // six times too pessimistic and stalled every lane on a full window.
+      var wait = rateDelayFor(batchSize * CALLS_PER_USER);
+      if (wait > 0) console.log('[UserImport] rate budget: holding ' + wait + 'ms');
+      setTimeout(pump, wait);
+    });
+  }
+
+  function startLanes() {
+    var n = Math.max(1, Math.min(LANES, toImport.length));
+    console.log('[UserImport] starting ' + n + ' lanes for ' + toImport.length + ' users');
+    activeLanes = n;
+    for (var i = 0; i < n; i++) pump();
+  }
+
+  function runChunk(chunk, done) {
+    saveCheckpoint();
 
     var calls = chunk.map(function (r) {
       return ['Add', { typeName: 'User', entity: buildEntity(r) }];
@@ -1577,6 +2005,7 @@ function importUsers() {
     trackApiCall();
     chargeCalls(calls.length);
     _api.multiCall(calls, function (responses) {
+      noteRateLimit(responses);
       console.log('[UserImport] multiCall responses:', JSON.stringify(responses));
       var setQueue = [];
       chunk.forEach(function (r, i) {
@@ -1607,13 +2036,9 @@ function importUsers() {
         var elapsed = Date.now() - batchStart;
         console.log('[UserImport] batch of ' + chunk.length + ' took ' + elapsed +
                     'ms (' + Math.round(elapsed / chunk.length) + 'ms/user)');
-        retuneBatch(chunk.length, elapsed, false);
+        retuneBatch(chunk.length, elapsed);
         updateStatus();
-        // Wait only as long as the rate budget actually demands, rather than a
-        // flat delay that idled ~96% of the allowance on the old fixed pacing.
-        var wait = rateDelayFor(batchSize * CALLS_PER_USER);
-        if (wait > 0) console.log('[UserImport] rate budget: holding ' + wait + 'ms');
-        setTimeout(function() { nextBatch(offset + chunk.length); }, wait);
+        done();
       }
 
       function sendSets() {
@@ -1627,8 +2052,9 @@ function importUsers() {
         });
         trackApiCall();
         chargeCalls(setCalls.length);
-        _api.multiCall(setCalls, function () { advance(); }, function (err) {
-          console.warn('[UserImport] Set failed:', err);
+        _api.multiCall(setCalls, function (ok) { noteRateLimit(ok); advance(); }, function (err) {
+          noteRateLimit(err);
+          console.warn('[UserImport] Set failed:', errMessage(err));
           advance();
         });
       }
@@ -1636,16 +2062,49 @@ function importUsers() {
       sendSets();
 
     }, function (err) {
-      console.warn('[UserImport] Whole batch rejected, falling back:', JSON.stringify(err));
-      // Whole batch rejected — fall back to per-row calls for error detail.
-      // The failure also halves the batch size, so a database that cannot cope
-      // with the current size is backed away from rather than hammered.
-      retuneBatch(chunk.length, Date.now() - batchStart, true);
-      individualFallback(chunk, function () {
-        completed += chunk.length;
-        updateProgress();
-        setTimeout(function() { nextBatch(offset + chunk.length); }, rateDelayFor(batchSize * CALLS_PER_USER));
-      });
+      noteRateLimit(err);
+      var idx = extractRequestIndex(err);
+      var msg = errMessage(err);
+
+      // Without an index there is no way to tell which row broke it, so the old
+      // behaviour stands: retry the chunk one at a time to find out.
+      if (idx === null || idx < 0 || idx >= chunk.length) {
+        console.warn('[UserImport] batch rejected with no usable requestIndex, falling back:', JSON.stringify(err));
+        individualFallback(chunk, function () {
+          completed += chunk.length;
+          updateProgress();
+          done();
+        });
+        return;
+      }
+
+      var committed = chunk.slice(0, idx);
+      var culprit   = chunk[idx];
+      console.warn('[UserImport] batch rejected at index ' + idx + ' (' + culprit.email + '): ' + msg
+                   + ' | ' + committed.length + ' committed before it, '
+                   + (chunk.length - idx - 1) + ' never attempted');
+
+      committed.forEach(function (r) { r.status = 'done'; completed++; });
+
+      if (msg.indexOf('Duplicate') !== -1) {
+        culprit.status   = 'duplicate';
+        culprit.apiError = 'User already exists';
+      } else {
+        culprit.status   = 'error';
+        culprit.apiError = msg;
+      }
+      completed++;
+      updateProgress();
+
+      // Deliberately no retuneBatch here. A rejection says nothing about size,
+      // only that one row was bad, and timing a partial batch would skew the
+      // cost per user. The next clean batch re-measures.
+      // Rows after the culprit were never sent. Hand them back to the queue so
+      // any free lane can take them, rather than re-adding them here.
+      var untried = chunk.slice(idx + 1);
+      if (untried.length > 0) requeue = untried.concat(requeue);
+
+      recoverPrefix(committed, done);
     });
   }
 
@@ -1659,6 +2118,7 @@ function importUsers() {
       chargeCalls(1);
       console.log('[UserImport] Individual Add for', r.email, JSON.stringify(entity));
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
+        noteRateLimit(userId);
         r.status = 'done';
         console.log('[UserImport] Individual Add succeeded for', r.email, 'userId:', userId);
 
@@ -1670,14 +2130,15 @@ function importUsers() {
           trackApiCall();
           chargeCalls(1);
           _api.call('Set', { typeName: 'User', entity: e },
-            function () { next(); },
-            function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
+            function (ok) { noteRateLimit(ok); next(); },
+            function (err) { noteRateLimit(err); console.warn('[UserImport] Set failed for', r.email, errMessage(err)); next(); }
           );
         } else {
           next();
         }
       }, function (err) {
-        var errMsg = typeof err === 'string' ? err : (err && err.message) || JSON.stringify(err);
+        noteRateLimit(err);
+        var errMsg = errMessage(err);
         if (errMsg.indexOf('DuplicateUserException') !== -1 || errMsg.indexOf('Duplicate') !== -1) {
           r.status   = 'duplicate';
           r.apiError = 'User already exists';
@@ -1761,7 +2222,7 @@ function importUsers() {
       '</div>';
   }
 
-  nextBatch(0);
+  startLanes();
 }
 
 // ── Download results spreadsheet ──────────────────────────────────────────────

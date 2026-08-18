@@ -151,7 +151,9 @@
   </div>
 </div>
 
-<div class="max-w-5xl mx-auto px-6 py-6 space-y-5">
+<!-- 7xl rather than 5xl: the Fix panel puts a name, a username, an error
+     sentence and four controls on one line, and 5xl wrapped all of them. -->
+<div class="max-w-7xl mx-auto px-6 py-6 space-y-5">
 
   <!-- Step 1 -->
   <div class="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
@@ -166,10 +168,6 @@
       <div class="flex items-center gap-2">
         <span id="dotGroups" class="dot dot-loading"></span>
         <span id="lblGroups" class="text-xs text-slate-500">Loading groups…</span>
-      </div>
-      <div class="flex items-center gap-2">
-        <span id="dotVehicles" class="dot dot-loading"></span>
-        <span id="lblVehicles" class="text-xs text-slate-500">Loading vehicles…</span>
       </div>
     </div>
 
@@ -347,7 +345,7 @@
       <h2 class="font-semibold text-slate-800">Fix Errors Before Importing</h2>
       <span id="fixErrorsBadge" class="text-xs font-semibold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full"></span>
     </div>
-    <p class="text-sm text-slate-400 mb-5 ml-8">Correct the highlighted fields below, then confirm each row. Rows stay in this list until you re-check them, so nothing moves while you are still typing. Once all errors are resolved the Import button will unlock.</p>
+    <p class="text-sm text-slate-400 mb-5 ml-8">Correct the highlighted fields below and confirm each row, or use Remove to leave a row out of the import altogether. Rows stay in this list until you re-check them, so nothing moves while you are still typing. Once every row is either fixed or removed the Import button will unlock.</p>
     <div id="fixErrorsBody" class="space-y-3 ml-8"></div>
     <div class="mt-5 ml-8 flex flex-wrap items-center gap-3">
       <button id="btnFixAll" onclick="confirmAllFixes()"
@@ -593,7 +591,6 @@ let _api           = null;
 let _database      = '';
 let GROUPS         = [];
 let GROUP_PARENT   = {};   // childGroupId -> parentGroupId, for hierarchy checks
-let VEHICLES       = [];
 let parsedRows     = [];
 let _importing     = false;
 
@@ -618,17 +615,43 @@ geotab.addin.userImport = function () {
       _api = api;
       if (state && state.database) {
         _database = state.database;
-        document.getElementById('dbBadge').textContent = state.database;
+        var badge = document.getElementById('dbBadge');
+        if (badge) badge.textContent = state.database;
       }
       loadReferenceData();
       callback();
     },
-    focus: function (api, state) { _api = api; loadReferenceData(); },
-    blur:  function () {}
+    focus: function (api, state) {
+      _api = api;
+      // Re-armed here because blur takes it off. Removing first keeps a second
+      // focus from stacking a duplicate listener.
+      document.removeEventListener('click', onDocumentClick);
+      document.addEventListener('click', onDocumentClick);
+      loadReferenceData();
+    },
+    // Our DOM goes when the user navigates away, but this script's scope does
+    // not, so anything still attached to document would keep firing against
+    // elements that no longer exist.
+    blur: function () {
+      document.removeEventListener('click', onDocumentClick);
+      closeMenu();
+      closePanel();
+    }
   };
 };
 
 // ── Reference data ────────────────────────────────────────────────────────────
+
+// A Get on a large database takes a few seconds, and the user can navigate away
+// inside that window. The callback still runs, so every element it touches has
+// to be looked up defensively rather than assumed present.
+function setRefStatus(dotId, lblId, dotClass, text) {
+  var dot = document.getElementById(dotId);
+  var lbl = document.getElementById(lblId);
+  if (dot) dot.className = dotClass;
+  if (lbl) lbl.textContent = text;
+}
+
 function loadReferenceData() {
   if (!_api) return;
 
@@ -685,35 +708,26 @@ function loadReferenceData() {
       g.label = g.isAmbiguous ? g.path : g.name;
     });
 
-    document.getElementById('dotGroups').className = 'dot dot-ok';
-    document.getElementById('lblGroups').textContent = GROUPS.length + ' groups loaded';
+    setRefStatus('dotGroups', 'lblGroups', 'dot dot-ok', GROUPS.length + ' groups loaded');
     checkReady();
   }, function () {
-    document.getElementById('dotGroups').className = 'dot dot-err';
-    document.getElementById('lblGroups').textContent = 'Groups unavailable';
+    setRefStatus('dotGroups', 'lblGroups', 'dot dot-err', 'Groups unavailable');
     checkReady();
   });
 
-  _api.call('Get', { typeName: 'Device', search: {} }, function (devices) {
-    VEHICLES = devices
-      .filter(function (d) { return d.id && d.id !== 'b0'; })
-      .map(function (d) { return { id: d.id, name: d.name || d.id, reg: (d.licensePlate || '').trim() }; })
-      .sort(function (a, b) { return a.name.localeCompare(b.name); });
-    document.getElementById('dotVehicles').className = 'dot dot-ok';
-    document.getElementById('lblVehicles').textContent = VEHICLES.length + ' vehicles loaded';
-    checkReady();
-  }, function () {
-    document.getElementById('dotVehicles').className = 'dot dot-err';
-    document.getElementById('lblVehicles').textContent = 'Vehicles unavailable';
-    checkReady();
-  });
+  // Vehicles were fetched here too and never read. Removed 2026-08-18: customers
+  // import users first and name the trackers later, so the list is empty or
+  // wrong at the moment we would pull it. Groups are the only reference data
+  // this add-in actually needs.
 }
 
+// Groups are the only thing being waited on, so the wizard unlocks as soon as
+// that call comes back either way. A failed load still unlocks: the group
+// picker degrades to the typed value from the spreadsheet.
 function checkReady() {
   _refLoadCount++;
-  if (_refLoadCount >= 2) {
-    document.getElementById('phaseType').classList.remove('opacity-40', 'pointer-events-none');
-  }
+  var phase = document.getElementById('phaseType');
+  if (phase) phase.classList.remove('opacity-40', 'pointer-events-none');
 }
 
 // ── Wizard ────────────────────────────────────────────────────────────────────
@@ -1019,7 +1033,7 @@ function processFile(file) {
 /** Stable fingerprint of the importable rows, so a saved checkpoint can only be
  *  offered against the same file it was created from. */
 function rowsFingerprint(list) {
-  var basis = list.filter(function (r) { return r.errors.length === 0; })
+  var basis = list.filter(function (r) { return r.errors.length === 0 && r.status !== 'skipped'; })
                   .map(function (r) { return (r.email || '').toLowerCase(); })
                   .join('\n');
   var h = 5381;
@@ -1034,7 +1048,9 @@ function flagDuplicateUsernames(list) {
   var seen = {};
   list.forEach(function (r) {
     var key = (r.email || '').toLowerCase();
-    if (!key) return;
+    // A row taken out of the import is not competing for the username any more,
+    // so removing one half of a clash clears the other half.
+    if (!key || r.status === 'skipped') return;
     (seen[key] = seen[key] || []).push(r);
   });
   Object.keys(seen).forEach(function (key) {
@@ -1077,10 +1093,49 @@ function validateRow(r) {
  *  somewhere else as clear the one it was meant to fix. */
 function revalidateAll() {
   parsedRows.forEach(function (r) {
-    if (r.status === 'done' || r.status === 'duplicate') { r.errors = []; return; }
+    // Finished or deliberately dropped: nothing about the row can go wrong now.
+    if (r.status === 'done' || r.status === 'duplicate' || r.status === 'skipped') { r.errors = []; return; }
     r.errors = validateRow(r);
   });
   flagDuplicateUsernames(parsedRows);
+}
+
+/** Take a row out of the import without deleting it. The usual case is a row
+ *  that is a genuine duplicate of one already in the file: there is nothing to
+ *  correct, it simply should not be created. Reversible, because a stray click
+ *  on the wrong row of a 200-row file is otherwise unrecoverable. */
+function skipRow(rowNum) {
+  var r = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (!r || r.status === 'done' || r.status === 'duplicate') return;
+  r.status = 'skipped';
+  delete _fixEditing[rowNum];
+  delete _fixDraft[rowNum];
+  revalidateAll();
+  captureFixDrafts();
+  repaintFixRow(rowNum);
+  // Everyone else may have changed too: dropping one half of a clash clears the
+  // other half. Only their messages move, so their dropdowns are left alone.
+  refreshFixMessages();
+  renderPreviewTableOnly();
+}
+
+function unskipRow(rowNum) {
+  var r = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (!r || r.status !== 'skipped') return;
+  r.status = 'pending';
+  revalidateAll();
+
+  // Put back from the preview table, the row may not be in the panel at all,
+  // and if it returns with errors it has to appear there.
+  if (document.getElementById('fixRow_' + rowNum)) {
+    captureFixDrafts();
+    repaintFixRow(rowNum);
+    refreshFixMessages();
+    renderPreviewTableOnly();
+  } else {
+    if (r.errors.length > 0) _fixKeep[rowNum] = true;
+    renderPreview();
+  }
 }
 
 function parseRows(rows) {
@@ -1226,13 +1281,16 @@ function renderPreview(skipFixPanel) {
   if (parsedRows.length === 0) return;
 
   var f = parsedRows[0];
-  var validCount   = parsedRows.filter(function (r) { return r.errors.length === 0; }).length;
-  var invalidCount = parsedRows.length - validCount;
+  // Removed rows have no errors, so they would otherwise be counted as valid.
+  var removedCount = parsedRows.filter(function (r) { return r.status === 'skipped'; }).length;
+  var validCount   = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status !== 'skipped'; }).length;
+  var invalidCount = parsedRows.length - validCount - removedCount;
 
   document.getElementById('previewSection').classList.remove('hidden');
   document.getElementById('previewMeta').textContent =
     parsedRows.length + ' rows · ' + validCount + ' valid' +
-    (invalidCount > 0 ? ' · ' + invalidCount + ' with errors' : '');
+    (invalidCount > 0 ? ' · ' + invalidCount + ' with errors' : '') +
+    (removedCount > 0 ? ' · ' + removedCount + ' removed' : '');
 
   var thC = 'px-4 py-3 text-left text-xs font-semibold text-slate-400 uppercase tracking-widest';
   var headCols = ['#', 'First Name', 'Last Name', 'Email (Login)'];
@@ -1262,6 +1320,9 @@ function renderPreview(skipFixPanel) {
       statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="User already exists in the database">&#x2713; Already exists</span>';
     } else if (r.status === 'error') {
       statusHtml = '<span class="badge-fail text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.apiError) + '">&#x2715; Failed</span>';
+    } else if (r.status === 'skipped') {
+      statusHtml = '<span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-slate-200 text-slate-500">Removed</span>'
+        + (_importing ? '' : ' <button onclick="unskipRow(' + r.rowNum + ')" class="text-xs font-semibold text-blue-600 hover:underline ml-1">Put back</button>');
     } else if (r.errors.length > 0) {
       statusHtml = '<span class="badge-warn text-xs font-semibold px-2 py-0.5 rounded-full" title="' + esc(r.errors.join(', ')) + '">&#x26A0; ' + esc(r.errors[0]) + '</span>';
     } else {
@@ -1413,25 +1474,27 @@ function onFixIdentityKey(e, rowNum) {
 
 function fixStatusLine(r) {
   if (r.errors.length > 0) {
-    return '<p class="text-xs text-amber-600 mt-1">' + esc(r.errors.join(' · ')) + '</p>';
+    return '<p class="text-xs text-amber-600">' + esc(r.errors.join(' · ')) + '</p>';
   }
-  return '<p class="text-xs text-emerald-600 mt-1 font-medium">&#x2713; Nothing left to fix on this row. Re-check rows to move it into the import.</p>';
+  return '<p class="text-xs text-emerald-600 font-medium">&#x2713; Nothing left to fix on this row. Re-check rows to move it into the import.</p>';
 }
 
-/** Name and username, either read-only behind an Edit button or unlocked. */
+/** Name and username, either read-only behind an Edit button or unlocked.
+ *  The status line is not part of this block: it gets the full width of the row
+ *  underneath, because "Duplicate username in file (rows 26, 189, 190)" does not
+ *  fit beside four dropdowns and was wrapping into a cramped two-line column. */
 function fixIdentityHtml(r) {
   if (!_fixEditing[r.rowNum]) {
-    return '<div class="flex items-start gap-2">'
+    return '<div class="flex items-center justify-between gap-4">'
       +   '<div class="min-w-0">'
-      +     '<p class="text-sm font-medium text-slate-700">' + esc((r.firstName + ' ' + r.lastName).trim() || '(no name)') + '</p>'
-      +     '<p class="text-xs text-slate-400">' + esc(r.email || '(no username)') + '</p>'
+      +     '<p class="text-sm font-medium text-slate-700 truncate">' + esc((r.firstName + ' ' + r.lastName).trim() || '(no name)') + '</p>'
+      +     '<p class="text-xs text-slate-400 truncate">' + esc(r.email || '(no username)') + '</p>'
       +   '</div>'
       +   '<button type="button" onclick="startFixEdit(' + r.rowNum + ')" title="Unlock the name and username on this row" '
-      +     'class="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:border-blue-400 hover:text-blue-600 transition-colors">'
-      +     '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit'
+      +     'class="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 text-xs font-semibold hover:border-blue-400 hover:text-blue-600 transition-colors">'
+      +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit'
       +   '</button>'
-      + '</div>'
-      + fixStatusLine(r);
+      + '</div>';
   }
 
   var v   = fixFieldValues(r);
@@ -1444,18 +1507,17 @@ function fixIdentityHtml(r) {
       + '</div>';
   }
 
-  return '<div class="flex flex-wrap items-end gap-1.5">'
-    +   field('fixFirst', 'First name', v.firstName, 'w-28')
-    +   field('fixLast',  'Last name',  v.lastName,  'w-28')
-    +   field('fixEmail', 'Username',   v.email,     'w-64')
+  return '<div class="flex flex-wrap items-end gap-2">'
+    +   field('fixFirst', 'First name', v.firstName, 'w-32')
+    +   field('fixLast',  'Last name',  v.lastName,  'w-32')
+    +   field('fixEmail', 'Username',   v.email,     'w-72')
     +   '<button type="button" onclick="saveFixIdentity(' + r.rowNum + ')" '
-    +     'class="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
+    +     'class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
     +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>Save'
     +   '</button>'
     +   '<button type="button" onclick="cancelFixEdit(' + r.rowNum + ')" '
-    +     'class="inline-flex items-center px-2 py-1.5 rounded-lg text-slate-400 text-xs font-semibold hover:text-slate-600 transition-colors">Cancel</button>'
-    + '</div>'
-    + fixStatusLine(r);
+    +     'class="inline-flex items-center px-2.5 py-1.5 rounded-lg text-slate-400 text-xs font-semibold hover:text-slate-600 transition-colors">Cancel</button>'
+    + '</div>';
 }
 
 function repaintFixIdentity(rowNum) {
@@ -1463,6 +1525,9 @@ function repaintFixIdentity(rowNum) {
   var r    = parsedRows.find(function (p) { return p.rowNum === rowNum; });
   if (!host || !r) return;
   host.innerHTML = fixIdentityHtml(r);
+
+  var msg = document.getElementById('fixMsg_' + rowNum);
+  if (msg) msg.innerHTML = fixStatusLine(r);
 
   // Amber while something is wrong, green once nothing is. The row keeps its
   // place either way; the colour is the only thing that moves.
@@ -1486,17 +1551,19 @@ function refreshFixMessages() {
 
 function updateFixCounters() {
   var shown    = parsedRows.filter(function (r) { return _fixKeep[r.rowNum] && r.status !== 'done'; });
-  var stillBad = shown.filter(function (r) { return r.errors.length > 0; }).length;
-  var resolved = shown.length - stillBad;
+  var removed  = shown.filter(function (r) { return r.status === 'skipped'; }).length;
+  var stillBad = shown.filter(function (r) { return r.status !== 'skipped' && r.errors.length > 0; }).length;
+  var resolved = shown.length - stillBad - removed;
 
   var badge = document.getElementById('fixErrorsBadge');
   if (badge) badge.textContent = stillBad + ' row' + (stillBad !== 1 ? 's' : '') + ' need attention';
 
   var hint = document.getElementById('fixResolvedHint');
   if (hint) {
-    hint.textContent = resolved > 0
-      ? resolved + ' row' + (resolved !== 1 ? 's' : '') + ' ready to move out'
-      : '';
+    var parts = [];
+    if (resolved > 0) parts.push(resolved + ' fixed');
+    if (removed  > 0) parts.push(removed + ' removed');
+    hint.textContent = parts.length ? parts.join(' · ') + ', ready to clear from this list' : '';
   }
 
   var importable = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
@@ -1540,11 +1607,16 @@ function renderFixErrors() {
 
   section.classList.remove('hidden');
 
-  var secOptions = SECURITY_LEVELS.map(function (s) {
-    return '<option value="' + s.id + '">' + s.label + '</option>';
-  }).join('');
+  document.getElementById('fixErrorsBody').innerHTML = errored.map(fixRowHtml).join('');
 
-  document.getElementById('fixErrorsBody').innerHTML = errored.map(function (r, i) {
+  updateFixCounters();
+}
+
+/** One whole row of the Fix panel. Its own function so a single row can be
+ *  replaced in place. Removing a row changes its entire shape, and rebuilding
+ *  the panel to show that would reset every unconfirmed dropdown in the list. */
+function fixRowHtml(r) {
+  {
     var hasSecErr = r.errors.some(function (e) { return e.indexOf('security') !== -1 || e.indexOf('Security') !== -1; });
     var hasGrpErr = r.errors.some(function (e) { return e.indexOf('Group') !== -1 || e.indexOf('group') !== -1; });
 
@@ -1571,24 +1643,54 @@ function renderFixErrors() {
           + '</select>'
       : '';
 
-    return '<div id="fixRow_' + r.rowNum + '" class="flex flex-wrap items-center gap-3 p-4 rounded-xl border '
+    // A row taken out of the import keeps its place in the list, greyed out,
+    // with the way back sitting on it. It leaves on Re-check like everything
+    // else. Its controls are gone: there is nothing left to set on it.
+    if (r.status === 'skipped') {
+      return '<div id="fixRow_' + r.rowNum + '" class="flex flex-wrap items-center justify-between gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50">'
+        + '<div class="min-w-0">'
+        +   '<p class="text-sm font-medium text-slate-400 line-through truncate">' + esc((r.firstName + ' ' + r.lastName).trim() || '(no name)') + '</p>'
+        +   '<p class="text-xs text-slate-300 line-through truncate">' + esc(r.email || '(no username)') + '</p>'
+        +   '<p class="text-xs text-slate-400 mt-1.5">Removed from the import. It will not be created.</p>'
+        + '</div>'
+        + '<button type="button" onclick="unskipRow(' + r.rowNum + ')" '
+        +   'class="shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-white transition-colors">'
+        +   '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a5 5 0 010 10h-3m-7-10l4-4m-4 4l4 4"/></svg>Put back'
+        + '</button>'
+        + '</div>';
+    }
+
+    // Two bands. The top one carries the identity and the controls side by side,
+    // the bottom one gives the error sentence the whole width so it never has to
+    // wrap inside a narrow column.
+    return '<div id="fixRow_' + r.rowNum + '" class="p-4 rounded-xl border '
       + (r.errors.length > 0 ? 'border-amber-100 bg-amber-50/40' : 'border-emerald-100 bg-emerald-50/40') + '">'
-      + '<div id="fixIdent_' + r.rowNum + '" class="min-w-0 flex-1">' + fixIdentityHtml(r) + '</div>'
-      + '<div class="flex flex-wrap items-center gap-2">'
+      + '<div class="flex flex-wrap items-end gap-x-4 gap-y-3">'
+      +   '<div id="fixIdent_' + r.rowNum + '" class="min-w-[16rem] flex-1 self-center">' + fixIdentityHtml(r) + '</div>'
       +   (r.hasDrv ? '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Is Driver</span>' + drvSel + '</div>' : '')
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Security Level</span>' + secSel + '</div>'
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Groups <span class="text-slate-300">(none = company level)</span></span>' + grpSel + '</div>'
       +   (findGroupConflicts(r.groupIds).length > 0
-            ? '<button onclick="keepParentOnly(' + r.rowNum + ')" title="Removes the child group. The parent already grants access to it, so access is unchanged." class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Keep parent only</button>'
+            ? '<button onclick="keepParentOnly(' + r.rowNum + ')" title="Removes the child group. The parent already grants access to it, so access is unchanged." class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Keep parent only</button>'
             : '')
-      +   '<button onclick="confirmFix(' + r.rowNum + ')" class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
+      +   '<button onclick="confirmFix(' + r.rowNum + ')" class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
       +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>Confirm'
       +   '</button>'
+      +   '<button onclick="skipRow(' + r.rowNum + ')" title="Leave this row out of the import. Nothing is deleted and you can put it back." '
+      +     'class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-500 text-xs font-semibold hover:border-red-300 hover:text-red-600 transition-colors">'
+      +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>Remove'
+      +   '</button>'
       + '</div>'
+      + '<div id="fixMsg_' + r.rowNum + '" class="mt-2.5">' + fixStatusLine(r) + '</div>'
       + '</div>';
-  }).join('');
+  }
+}
 
-  updateFixCounters();
+/** Swap one row's markup, leaving every other row's controls untouched. */
+function repaintFixRow(rowNum) {
+  var el = document.getElementById('fixRow_' + rowNum);
+  var r  = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (el && r) el.outerHTML = fixRowHtml(r);
 }
 
 /** Read this row's dropdowns onto the row. Shared by Confirm and Confirm All so
@@ -2165,6 +2267,7 @@ function importUsers() {
     var done      = parsedRows.filter(function (r) { return r.status === 'done';      }).length;
     var dupes     = parsedRows.filter(function (r) { return r.status === 'duplicate'; }).length;
     var failed    = parsedRows.filter(function (r) { return r.status === 'error';     }).length;
+    var removed   = parsedRows.filter(function (r) { return r.status === 'skipped';   }).length;
 
     // Report what the run actually achieved. The old status line quoted a
     // hardcoded "~4 users/sec" that was never measured against anything.
@@ -2206,6 +2309,12 @@ function importUsers() {
               '<p class="text-xs text-red-400 mt-0.5 font-medium">Failed</p>' +
             '</div>'
           : '') +
+        (removed > 0
+          ? '<div class="text-center px-6 py-4 rounded-xl bg-slate-50 border border-slate-200">' +
+              '<p class="text-3xl font-bold text-slate-400">' + removed + '</p>' +
+              '<p class="text-xs text-slate-400 mt-0.5 font-medium">Removed by you</p>' +
+            '</div>'
+          : '') +
         '<div class="flex flex-col gap-2 ml-2">' +
           '<p class="text-sm text-slate-400">' +
             (failed > 0
@@ -2227,7 +2336,11 @@ function importUsers() {
 
 // ── Download results spreadsheet ──────────────────────────────────────────────
 function downloadResults() {
-  var rows = parsedRows.filter(function (r) { return r.status === 'done' || r.status === 'duplicate' || r.status === 'error'; });
+  // Rows removed on purpose are included: the file is the record of what the
+  // import did, and "we left these out" is part of that record.
+  var rows = parsedRows.filter(function (r) {
+    return r.status === 'done' || r.status === 'duplicate' || r.status === 'error' || r.status === 'skipped';
+  });
   if (rows.length === 0) return;
 
   var headers = ['First Name', 'Last Name', 'Email', 'Security Level', 'Status', 'Password / Note'];
@@ -2239,6 +2352,7 @@ function downloadResults() {
       r.secLabel,
       r.status === 'done'      ? 'Created'
         : r.status === 'duplicate' ? 'Already existed'
+        : r.status === 'skipped'   ? 'Removed before import'
         : 'Failed: ' + r.apiError,
       r.status === 'done' ? r.password : ''
     ];
@@ -2474,42 +2588,59 @@ function removeUsers() {
 }
 
 // ── Hamburger menu ────────────────────────────────────────────────────────────
+//
+// Every lookup here is guarded. These run from a shared scope that outlives the
+// page, so any of them can be reached once our own DOM has been torn down.
 function toggleMenu() {
   var menu = document.getElementById('headerMenu');
-  menu.classList.toggle('hidden');
+  if (menu) menu.classList.toggle('hidden');
 }
 
 function closeMenu() {
-  document.getElementById('headerMenu').classList.add('hidden');
+  var menu = document.getElementById('headerMenu');
+  if (menu) menu.classList.add('hidden');
 }
 
 var _activePanel = null;
 
 function openPanel(id) {
+  var backdrop = document.getElementById('panelBackdrop');
+  var panel    = document.getElementById(id);
+  if (!backdrop || !panel) return;
   if (_activePanel) {
-    document.getElementById(_activePanel).style.transform = 'translateX(100%)';
+    var prev = document.getElementById(_activePanel);
+    if (prev) prev.style.transform = 'translateX(100%)';
   }
   _activePanel = id;
-  document.getElementById('panelBackdrop').classList.remove('hidden');
-  document.getElementById(id).style.transform = 'translateX(0)';
+  backdrop.classList.remove('hidden');
+  panel.style.transform = 'translateX(0)';
 }
 
 function closePanel() {
   if (_activePanel) {
-    document.getElementById(_activePanel).style.transform = 'translateX(100%)';
+    var prev = document.getElementById(_activePanel);
+    if (prev) prev.style.transform = 'translateX(100%)';
     _activePanel = null;
   }
-  document.getElementById('panelBackdrop').classList.add('hidden');
+  var backdrop = document.getElementById('panelBackdrop');
+  if (backdrop) backdrop.classList.add('hidden');
 }
 
-// Close menu when clicking outside
-document.addEventListener('click', function(e) {
+// Close the menu on a click outside it.
+//
+// Registered on document, and MyGeotab injects add-in pages into the host page
+// rather than an iframe, so this listener outlives the page. Navigate away and
+// it is still attached, firing on every click in MyGeotab while the elements it
+// reaches for no longer exist. btn was null, btn.contains threw a TypeError on
+// every click, and MyGeotab raised its "Report" toast each time. Hence both the
+// null guard and the detach on blur below.
+function onDocumentClick(e) {
   var btn  = document.getElementById('hamburgerBtn');
   var menu = document.getElementById('headerMenu');
-  if (!btn.contains(e.target) && !menu.contains(e.target)) {
-    closeMenu();
-  }
-});
+  if (!btn || !menu) return;
+  if (!btn.contains(e.target) && !menu.contains(e.target)) closeMenu();
+}
+document.addEventListener('click', onDocumentClick);
 </script>
 </body>
 </html>

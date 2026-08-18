@@ -377,7 +377,8 @@ const SECURITY_LEVELS = [
 // Order here = column order in the generated template
 // onlyDriver: only shown (and included) when type = 'drivers' or 'both'
 const OPTIONAL_FIELDS = [
-  { key: 'group',      label: 'Group',               header: 'Group',              defaultOn: true                   },
+  { key: 'group',      label: 'Group',               header: 'Group',              defaultOn: true,
+    hint: 'One cell per user — separate multiple groups with a semicolon' },
   { key: 'password',   label: 'Temporary Password',  header: 'Temporary Password', defaultOn: true                   },
   { key: 'employeeNo', label: 'Employee Number',      header: 'Employee Number',    defaultOn: false                  },
   { key: 'phone',      label: 'Phone Number',         header: 'Phone Number',       defaultOn: false                  },
@@ -390,6 +391,10 @@ const OPTIONAL_FIELDS = [
 const ROW_PRESENCE_FIELDS = ['Email (Login)', 'First Name', 'Last Name'];
 // MIFARE UIDs are 4 bytes (8 hex chars) or 7 bytes (14 hex chars).
 const VALID_NFC_KEY = /^([0-9a-fA-F]{8}|[0-9a-fA-F]{14})$/;
+// A user can belong to any number of groups, so they share one cell rather than
+// a fixed set of columns. Semicolon over comma: real group names contain commas
+// often enough ("Fleet, North") that a comma would split names in half.
+const GROUP_DELIM = ';';
 
 /** Readable text from a thrown value or a MyGeotab API error object. */
 function errText(err) {
@@ -397,6 +402,74 @@ function errText(err) {
   if (typeof err === 'string') return err;
   if (err.message) return err.message;
   try { return JSON.stringify(err); } catch (e) { return String(err); }
+}
+
+/** Find a group by name — exact first, then case-insensitively, mirroring how
+ *  security levels are matched. */
+function findGroupByName(name) {
+  return GROUPS.find(function (g) { return g.name === name; })
+      || GROUPS.find(function (g) { return g.name.toLowerCase() === name.toLowerCase(); });
+}
+
+/** Resolve one Group cell into matched group ids and names.
+ *
+ *  The cell is matched whole before it is split, so a group whose own name
+ *  contains a semicolon still resolves rather than being torn into two unknown
+ *  halves. Blank segments (a trailing "A; B;") are ignored and a group named
+ *  twice collapses to one entry, because MyGeotab rejects a duplicated id in
+ *  companyGroups. */
+function parseGroupCell(raw) {
+  var out = { ids: [], names: [], errors: [] };
+  var text = (raw || '').toString().trim();
+  if (!text) return out;
+
+  var whole = findGroupByName(text);
+  if (whole) {
+    out.ids.push(whole.id);
+    out.names.push(whole.name);
+    return out;
+  }
+
+  var seen = {};
+  text.split(GROUP_DELIM).forEach(function (part) {
+    var name = part.trim();
+    if (!name) return;
+    var g = findGroupByName(name);
+    if (!g) {
+      out.errors.push('Group not found: ' + name);
+      return;
+    }
+    if (seen[g.id]) return;
+    seen[g.id] = true;
+    out.ids.push(g.id);
+    out.names.push(g.name);
+  });
+  return out;
+}
+
+/** Group ids on a row, as MyGeotab entity references. Falls back to the whole
+ *  company when no group was given, matching the previous single-group default. */
+function groupRefs(r) {
+  return r.groupIds && r.groupIds.length
+    ? r.groupIds.map(function (id) { return { id: id }; })
+    : [{ id: 'GroupCompanyId' }];
+}
+
+/** Set a row's groups from a list of ids, dropping any that no longer exist. */
+function applyGroupIds(r, ids) {
+  var matched = (ids || [])
+    .map(function (id) { return GROUPS.find(function (g) { return g.id === id; }); })
+    .filter(Boolean);
+  r.groupIds   = matched.map(function (g) { return g.id; });
+  r.groupNames = matched.map(function (g) { return g.name; });
+}
+
+/** Selected values of a multi-select, or null if the element is absent. */
+function readMultiSelect(el) {
+  if (!el) return null;
+  return Array.prototype.slice.call(el.options)
+    .filter(function (o) { return o.selected; })
+    .map(function (o) { return o.value; });
 }
 
 /** Cryptographically random temporary password meeting MyGeotab complexity. */
@@ -523,10 +596,12 @@ function selectUserType(type) {
     })
     .map(function (f) {
       var onChange = f.key === 'driverKey' ? ' onchange="updateKeyTypeVisibility()"' : '';
-      return '<label class="flex items-center gap-3 cursor-pointer select-none">' +
+      return '<label class="flex items-start gap-3 cursor-pointer select-none">' +
         '<input type="checkbox" id="field-' + f.key + '"' + (f.defaultOn ? ' checked' : '') +
-        onChange + ' class="w-4 h-4 accent-blue-600">' +
-        '<span class="text-sm text-slate-700">' + f.label + '</span>' +
+        onChange + ' class="w-4 h-4 mt-0.5 accent-blue-600">' +
+        '<span class="text-sm text-slate-700">' + f.label +
+        (f.hint ? '<span class="block text-xs text-slate-400">' + f.hint + '</span>' : '') +
+        '</span>' +
         '</label>';
     }).join('');
 
@@ -649,15 +724,17 @@ function downloadTemplate() {
     }
   }
 
+  // Deliberately no list validation on Group: a cell may hold several
+  // semicolon-separated names, which a list rule would reject outright. The
+  // Valid Options sheet carries the names and the add-in validates on upload.
   if (hasGrp && groupNames.length > 0) {
     ws['!dataValidations'].push({
-      type: 'list',
+      type: 'custom',
       sqref: colLetter(groupIdx) + '2:' + colLetter(groupIdx) + '500',
-      formula1: "'Valid Options'!$A$2:$A$" + (groupNames.length + 1),
-      showDropDown: false,
-      error: 'Select a group from the list.',
-      errorTitle: 'Invalid Group',
-      showErrorMessage: true
+      formula1: 'TRUE',
+      showInputMessage: true,
+      promptTitle: 'Group',
+      prompt: 'Copy names from the Valid Options sheet. For more than one group, separate them with a semicolon:\nDepot A; Depot B; Workshop'
     });
   }
 
@@ -709,13 +786,23 @@ function downloadTemplate() {
 
   XLSX.utils.book_append_sheet(wb, ws, 'Template');
 
-  var refRows = [['Valid Groups', 'Valid Security Levels']];
-  var maxLen  = Math.max(groupNames.length, secLabels.length);
+  // Group names stay in column A from row 2 down, so the list is easy to copy
+  // from and any future validation formula can still point at $A$2:$A$n.
+  var refRows = [['Valid Groups', 'Valid Security Levels', 'Notes']];
+  var refNotes = [
+    'To put a user in more than one group, list the group names in the single',
+    'Group cell, separated by a semicolon. Spaces around the semicolon are fine.',
+    '',
+    'Example:  Depot A; Depot B; Workshop',
+    '',
+    'Leave the cell empty to place the user at company level.'
+  ];
+  var maxLen = Math.max(groupNames.length, secLabels.length, refNotes.length);
   for (var i = 0; i < maxLen; i++) {
-    refRows.push([groupNames[i] || '', secLabels[i] || '']);
+    refRows.push([groupNames[i] || '', secLabels[i] || '', refNotes[i] || '']);
   }
   var wsRef = XLSX.utils.aoa_to_sheet(refRows);
-  wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }];
+  wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }, { wch: 72 }];
   XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
 
   var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
@@ -839,7 +926,7 @@ function parseRows(rows) {
       var isDriverInvalid = hasDrv && rawIsDriver !== '' && rawIsDriver.toLowerCase() !== 'yes' && rawIsDriver.toLowerCase() !== 'no';
 
       var rawPwd    = hasPwd    ? (r['Temporary Password'] || '').toString().trim() : '';
-      var groupName = hasGrp    ? (r['Group']              || '').toString().trim() : '';
+      var groupCell = hasGrp    ? (r['Group']              || '').toString().trim() : '';
       var employeeNo= hasEmp    ? (r['Employee Number']    || '').toString().trim() : '';
       var phonePrefix = hasPhone ? (r['Phone Prefix'] || '').toString().trim() : '';
       var phoneNum    = hasPhone ? (r['Phone Number'] || '').toString().trim() : '';
@@ -862,8 +949,8 @@ function parseRows(rows) {
         errors.push('Driver key must be 8 or 14 hex characters (got ' + driverKey.length + ')');
       }
 
-      var matchedGroup = groupName ? GROUPS.find(function (g) { return g.name === groupName; }) : null;
-      if (groupName && !matchedGroup) errors.push('Group not found: ' + groupName);
+      var groupInfo = parseGroupCell(groupCell);
+      groupInfo.errors.forEach(function (e) { errors.push(e); });
 
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.label === secLabel; })
                     || SECURITY_LEVELS.find(function (s) { return s.label.toLowerCase() === secLabel.toLowerCase(); });
@@ -877,7 +964,7 @@ function parseRows(rows) {
         firstName, lastName, email,
         password: finalPassword, passwordProvided,
         isDriver, isDriverInvalid,
-        groupName, groupId: matchedGroup ? matchedGroup.id : null,
+        groupNames: groupInfo.names, groupIds: groupInfo.ids,
         secLabel: matchedSec ? matchedSec.label : secLabel, secId: matchedSec ? matchedSec.id : null,
         employeeNo, phone, comment, driverKey, driverKeyType,
         hasDrv, hasGrp, hasPwd, hasEmp, hasPhone, hasCmt, hasDrvKey,
@@ -974,7 +1061,7 @@ function renderPreview() {
 
     var cells = [tdN(r.rowNum - 1), tdM(r.firstName), tdM(r.lastName), tdE(r.email)];
     if (r.hasDrv)    cells.push(tdS(r.isDriver ? 'Yes' : 'No'));
-    if (r.hasGrp)    cells.push(tdS(r.groupName || '—'));
+    if (r.hasGrp)    cells.push(tdS(r.groupNames.length ? r.groupNames.join(', ') : '—'));
     cells.push(tdS(r.secLabel));
     cells.push(tdR(pwDisplay));
     if (r.hasEmp)    cells.push(tdS(r.employeeNo || '—'));
@@ -1013,10 +1100,6 @@ function renderFixErrors() {
     return '<option value="' + s.id + '">' + s.label + '</option>';
   }).join('');
 
-  var grpOptions = '<option value="">— No group —</option>' + GROUPS.map(function (g) {
-    return '<option value="' + g.id + '">' + esc(g.name) + '</option>';
-  }).join('');
-
   document.getElementById('fixErrorsBody').innerHTML = errored.map(function (r, i) {
     var hasSecErr = r.errors.some(function (e) { return e.indexOf('security') !== -1 || e.indexOf('Security') !== -1; });
     var hasGrpErr = r.errors.some(function (e) { return e.indexOf('Group') !== -1 || e.indexOf('group') !== -1; });
@@ -1027,10 +1110,11 @@ function renderFixErrors() {
         }).join('')
       + '</select>';
 
-    var grpSel = '<select id="fixGrp_' + r.rowNum + '" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">'
-      + '<option value="">— No group —</option>'
+    // Multi-select rather than a dropdown: a user can sit in any number of
+    // groups, and selecting none is the "company level only" case.
+    var grpSel = '<select multiple size="4" id="fixGrp_' + r.rowNum + '" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white min-w-[12rem] focus:outline-none focus:ring-2 focus:ring-blue-400">'
       + GROUPS.map(function (g) {
-          return '<option value="' + g.id + '"' + (g.id === r.groupId ? ' selected' : '') + '>' + esc(g.name) + '</option>';
+          return '<option value="' + g.id + '"' + (r.groupIds.indexOf(g.id) !== -1 ? ' selected' : '') + '>' + esc(g.name) + '</option>';
         }).join('')
       + '</select>';
 
@@ -1050,7 +1134,7 @@ function renderFixErrors() {
       + '<div class="flex flex-wrap items-center gap-2">'
       +   (r.hasDrv ? '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Is Driver</span>' + drvSel + '</div>' : '')
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Security Level</span>' + secSel + '</div>'
-      +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Group</span>' + grpSel + '</div>'
+      +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Groups <span class="text-slate-300">(none = company level)</span></span>' + grpSel + '</div>'
       +   '<button onclick="confirmFix(' + r.rowNum + ')" class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
       +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>Confirm'
       +   '</button>'
@@ -1067,16 +1151,14 @@ function confirmFix(rowNum) {
   var grpEl = document.getElementById('fixGrp_' + rowNum);
   var drvEl = document.getElementById('fixDrv_' + rowNum);
 
-  var newSecId = secEl ? secEl.value : r.secId;
-  var newGrpId = grpEl ? grpEl.value : r.groupId;
+  var newSecId  = secEl ? secEl.value : r.secId;
+  var newGrpIds = readMultiSelect(grpEl);
 
   var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === newSecId; });
-  var matchedGrp = GROUPS.find(function (g) { return g.id === newGrpId; });
 
   r.secId    = matchedSec ? matchedSec.id    : r.secId;
   r.secLabel = matchedSec ? matchedSec.label : r.secLabel;
-  r.groupId  = matchedGrp ? matchedGrp.id    : null;
-  r.groupName= matchedGrp ? matchedGrp.name  : '';
+  if (newGrpIds) applyGroupIds(r, newGrpIds);
   if (drvEl) { r.isDriver = drvEl.value === 'yes'; r.isDriverInvalid = false; }
   r.errors   = [];
 
@@ -1096,7 +1178,7 @@ function confirmAllFixes() {
     var secEl = document.getElementById('fixSec_' + r.rowNum);
     var grpEl = document.getElementById('fixGrp_' + r.rowNum);
     var drvEl = document.getElementById('fixDrv_' + r.rowNum);
-    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVal: grpEl ? grpEl.value : null, drvVal: drvEl ? drvEl.value : null };
+    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVals: readMultiSelect(grpEl), drvVal: drvEl ? drvEl.value : null };
   });
   fixes.forEach(function (fix) {
     var r = parsedRows.find(function (p) { return p.rowNum === fix.rowNum; });
@@ -1105,11 +1187,7 @@ function confirmAllFixes() {
       var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === fix.secVal; });
       if (matchedSec) { r.secId = matchedSec.id; r.secLabel = matchedSec.label; }
     }
-    if (fix.grpVal !== null) {
-      var matchedGrp = GROUPS.find(function (g) { return g.id === fix.grpVal; });
-      r.groupId   = matchedGrp ? matchedGrp.id   : null;
-      r.groupName = matchedGrp ? matchedGrp.name : '';
-    }
+    if (fix.grpVals !== null) applyGroupIds(r, fix.grpVals);
     if (fix.drvVal !== null) { r.isDriver = fix.drvVal === 'yes'; r.isDriverInvalid = false; }
     r.errors = [];
   });
@@ -1141,7 +1219,7 @@ function buildEntity(r) {
     isDriver:                  r.isDriver,
     changePassword:            true,
     userAuthenticationType:    'BasicAuthentication',
-    companyGroups:             r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }],
+    companyGroups:             groupRefs(r),
     securityGroups:            r.secId ? [{ id: r.secId }] : [{ id: 'GroupUserSecurityId' }],
     isMetric:                  false,
     fuelEconomyUnit:           'MPGImperial',
@@ -1152,7 +1230,7 @@ function buildEntity(r) {
   if (r.phone)      entity.phoneNumber = r.phone;
   if (r.comment)    entity.comment     = r.comment;
   if (r.isDriver) {
-    entity.driverGroups = r.groupId ? [{ id: r.groupId }] : [{ id: 'GroupCompanyId' }];
+    entity.driverGroups = groupRefs(r);
     entity.viewDriversOwnDataOnly = false;
     if (r.driverKey) {
       entity.keys = [{ serialNumber: r.driverKey, driverKeyType: r.driverKeyType || 'Nfc', isImmobilizeOnly: true }];

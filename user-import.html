@@ -395,6 +395,10 @@ const VALID_NFC_KEY = /^([0-9a-fA-F]{8}|[0-9a-fA-F]{14})$/;
 // a fixed set of columns. Semicolon over comma: real group names contain commas
 // often enough ("Fleet, North") that a comma would split names in half.
 const GROUP_DELIM = ';';
+// Group names are not unique in MyGeotab: three divisions can each own a
+// subgroup called "Managers". Where that happens the full trail disambiguates,
+// and " > " is safe as a separator because it cannot appear in GROUP_DELIM.
+const GROUP_PATH_SEP = ' > ';
 
 /** Readable text from a thrown value or a MyGeotab API error object. */
 function errText(err) {
@@ -404,11 +408,91 @@ function errText(err) {
   try { return JSON.stringify(err); } catch (e) { return String(err); }
 }
 
-/** Find a group by name — exact first, then case-insensitively, mirroring how
- *  security levels are matched. */
-function findGroupByName(name) {
-  return GROUPS.find(function (g) { return g.name === name; })
-      || GROUPS.find(function (g) { return g.name.toLowerCase() === name.toLowerCase(); });
+/** Every group matching a name — exact case first, then case-insensitively,
+ *  mirroring how security levels are matched. Returns a list rather than one
+ *  hit because a name can legitimately belong to several groups, and picking
+ *  the first would silently file users under the wrong branch of the tree. */
+function findGroupsByName(name) {
+  var exact = GROUPS.filter(function (g) { return g.name === name; });
+  if (exact.length > 0) return exact;
+  var lower = name.toLowerCase();
+  return GROUPS.filter(function (g) { return g.name.toLowerCase() === lower; });
+}
+
+/** Compare paths loosely on spacing and case — the value is copied out of a
+ *  spreadsheet cell, so "A>B" and "a > b" must both match "A > B". */
+function normalisePath(text) {
+  return (text || '').split('>')
+    .map(function (p) { return p.trim(); })
+    .filter(Boolean)
+    .join(GROUP_PATH_SEP)
+    .toLowerCase();
+}
+
+/** Match on the full trail, which stays unique even when the leaf name does not. */
+function findGroupByPath(text) {
+  if (text.indexOf('>') === -1) return null;
+  var want = normalisePath(text);
+  return GROUPS.find(function (g) { return normalisePath(g.path) === want; }) || null;
+}
+
+/** Resolve one group reference to exactly one group, or explain why it could
+ *  not. A plain name is enough unless it is shared, in which case the caller is
+ *  told to use the trail instead of being handed an arbitrary match. */
+function resolveGroupRef(name) {
+  var byPath = findGroupByPath(name);
+  if (byPath) return { group: byPath };
+
+  var matches = findGroupsByName(name);
+  if (matches.length === 1) return { group: matches[0] };
+  if (matches.length === 0) return { error: 'Group not found: ' + name };
+  return { error: '"' + name + '" matches ' + matches.length + ' groups — copy the '
+    + 'full path from the Valid Options sheet instead, e.g. "' + matches[0].path + '"' };
+}
+
+/** Ancestor ids of a group, nearest first. Guards against a cycle in the tree
+ *  so a malformed hierarchy cannot hang the parse. */
+function groupAncestors(id) {
+  var out = [], current = GROUP_PARENT[id], seen = {};
+  while (current && !seen[current]) {
+    seen[current] = true;
+    out.push(current);
+    current = GROUP_PARENT[current];
+  }
+  return out;
+}
+
+function groupNameById(id) {
+  var g = GROUPS.find(function (x) { return x.id === id; });
+  return g ? g.label : id;
+}
+
+/** MyGeotab rejects a user holding both a group and any descendant of it —
+ *  access already flows down the tree, so the pair is contradictory and the
+ *  whole Add is refused. Catch it here, where the row can still be fixed,
+ *  rather than mid-import. Returns one message per offending pair. */
+function findGroupConflicts(ids) {
+  var set = {}, msgs = [];
+  (ids || []).forEach(function (id) { set[id] = true; });
+  (ids || []).forEach(function (id) {
+    groupAncestors(id).forEach(function (ancestorId) {
+      if (set[ancestorId]) {
+        msgs.push('"' + groupNameById(ancestorId) + '" already includes "' +
+                  groupNameById(id) + '" — list only one of them');
+      }
+    });
+  });
+  return msgs;
+}
+
+/** Drop any group whose parent (or higher ancestor) is also in the list. The
+ *  remaining set grants identical access, since a parent covers its subtree. */
+function collapseRedundantGroups(ids) {
+  var set = {};
+  (ids || []).forEach(function (id) { set[id] = true; });
+  return (ids || []).filter(function (id) {
+    return !groupAncestors(id).some(function (a) { return set[a]; });
+  });
 }
 
 /** Resolve one Group cell into matched group ids and names.
@@ -423,27 +507,34 @@ function parseGroupCell(raw) {
   var text = (raw || '').toString().trim();
   if (!text) return out;
 
-  var whole = findGroupByName(text);
-  if (whole) {
-    out.ids.push(whole.id);
-    out.names.push(whole.name);
+  function push(g) {
+    if (out.ids.indexOf(g.id) !== -1) return;
+    out.ids.push(g.id);
+    out.names.push(g.label);
+  }
+
+  if (text.indexOf(GROUP_DELIM) === -1) {
+    var single = resolveGroupRef(text);
+    if (single.group) push(single.group); else out.errors.push(single.error);
     return out;
   }
 
-  var seen = {};
+  // Only an unambiguous whole-cell hit short-circuits the split. A shared name
+  // must fall through so the ambiguity is reported rather than guessed at.
+  var whole = findGroupsByName(text);
+  if (whole.length === 1) {
+    push(whole[0]);
+    return out;
+  }
+
   text.split(GROUP_DELIM).forEach(function (part) {
     var name = part.trim();
     if (!name) return;
-    var g = findGroupByName(name);
-    if (!g) {
-      out.errors.push('Group not found: ' + name);
-      return;
-    }
-    if (seen[g.id]) return;
-    seen[g.id] = true;
-    out.ids.push(g.id);
-    out.names.push(g.name);
+    var res = resolveGroupRef(name);
+    if (res.group) push(res.group); else out.errors.push(res.error);
   });
+
+  findGroupConflicts(out.ids).forEach(function (m) { out.errors.push(m); });
   return out;
 }
 
@@ -461,15 +552,20 @@ function applyGroupIds(r, ids) {
     .map(function (id) { return GROUPS.find(function (g) { return g.id === id; }); })
     .filter(Boolean);
   r.groupIds   = matched.map(function (g) { return g.id; });
-  r.groupNames = matched.map(function (g) { return g.name; });
+  r.groupNames = matched.map(function (g) { return g.label; });
 }
 
-/** Selected values of a multi-select, or null if the element is absent. */
-function readMultiSelect(el) {
-  if (!el) return null;
-  return Array.prototype.slice.call(el.options)
-    .filter(function (o) { return o.selected; })
-    .map(function (o) { return o.value; });
+/** Ids chosen in a row's stacked group pickers, in order, without blanks or
+ *  repeats. An empty array is meaningful — it is the "company level" case — so
+ *  a missing picker returns null instead. */
+function readFixGroups(rowNum) {
+  var wrap = document.getElementById('fixGrpWrap_' + rowNum);
+  if (!wrap) return null;
+  var out = [];
+  Array.prototype.slice.call(wrap.querySelectorAll('select.fix-grp')).forEach(function (sel) {
+    if (sel.value && out.indexOf(sel.value) === -1) out.push(sel.value);
+  });
+  return out;
 }
 
 /** Cryptographically random temporary password meeting MyGeotab complexity. */
@@ -485,6 +581,7 @@ function randomPassword() {
 let _api           = null;
 let _database      = '';
 let GROUPS         = [];
+let GROUP_PARENT   = {};   // childGroupId -> parentGroupId, for hierarchy checks
 let VEHICLES       = [];
 let parsedRows     = [];
 let _importing     = false;
@@ -521,6 +618,9 @@ function loadReferenceData() {
         g.children.forEach(function (c) { if (c && c.id) parentMap[c.id] = g.id; });
       }
     });
+    // Kept for the whole session: MyGeotab refuses a user holding both a group
+    // and a descendant of it, so the tree is needed to validate before Add.
+    GROUP_PARENT = parentMap;
 
     function isOrgGroup(id) {
       var current = id, seen = new Set();
@@ -534,12 +634,34 @@ function loadReferenceData() {
 
     var secIds = new Set(SECURITY_LEVELS.map(function (s) { return s.id; }));
 
+    // Names of every group returned, ancestors included, so a trail can be
+    // spelled out even through a level the picker itself never offers.
+    var nameById = {};
+    groups.forEach(function (g) { if (g.name) nameById[g.id] = g.name; });
+
+    function pathOf(id) {
+      var trail = [nameById[id] || id];
+      groupAncestors(id).forEach(function (a) {
+        if (nameById[a]) trail.push(nameById[a]);
+      });
+      return trail.reverse().join(GROUP_PATH_SEP);
+    }
+
     GROUPS = groups
       .filter(function (g) {
         return g.name && g.id !== 'GroupCompanyId' && !secIds.has(g.id) && isOrgGroup(g.id);
       })
-      .map(function (g) { return { id: g.id, name: g.name }; })
-      .sort(function (a, b) { return a.name.localeCompare(b.name); });
+      .map(function (g) { return { id: g.id, name: g.name, path: pathOf(g.id) }; })
+      .sort(function (a, b) { return a.name.localeCompare(b.name) || a.path.localeCompare(b.path); });
+
+    // Anywhere a group is shown to a human, a shared name is useless on its
+    // own — fall back to the trail so three "Managers" stay tellable apart.
+    var nameCount = {};
+    GROUPS.forEach(function (g) { nameCount[g.name] = (nameCount[g.name] || 0) + 1; });
+    GROUPS.forEach(function (g) {
+      g.isAmbiguous = nameCount[g.name] > 1;
+      g.label = g.isAmbiguous ? g.path : g.name;
+    });
 
     document.getElementById('dotGroups').className = 'dot dot-ok';
     document.getElementById('lblGroups').textContent = GROUPS.length + ' groups loaded';
@@ -734,7 +856,7 @@ function downloadTemplate() {
       formula1: 'TRUE',
       showInputMessage: true,
       promptTitle: 'Group',
-      prompt: 'Copy names from the Valid Options sheet. For more than one group, separate them with a semicolon:\nDepot A; Depot B; Workshop'
+      prompt: 'Copy names from the Valid Options sheet. For more than one group, separate them with a semicolon:\nDepot A; Depot B; Workshop\n\nIf the same name appears twice in that list, paste its Full Path instead.'
     });
   }
 
@@ -788,21 +910,33 @@ function downloadTemplate() {
 
   // Group names stay in column A from row 2 down, so the list is easy to copy
   // from and any future validation formula can still point at $A$2:$A$n.
-  var refRows = [['Valid Groups', 'Valid Security Levels', 'Notes']];
+  var refRows = [['Valid Groups', 'Full Path', 'Valid Security Levels', 'Notes']];
+  var groupPaths = GROUPS.map(function (g) { return g.path; });
+  var anyAmbiguous = GROUPS.some(function (g) { return g.isAmbiguous; });
   var refNotes = [
     'To put a user in more than one group, list the group names in the single',
     'Group cell, separated by a semicolon. Spaces around the semicolon are fine.',
     '',
     'Example:  Depot A; Depot B; Workshop',
     '',
-    'Leave the cell empty to place the user at company level.'
+    'Leave the cell empty to place the user at company level.',
+    '',
+    'Do not list a group together with a group that sits above it in the',
+    'hierarchy. Access already flows down, so MyGeotab rejects the pair.',
+    '',
+    'Column A is what you normally type. Column B is only needed when the same',
+    'name appears twice in column A, because then the name alone cannot say',
+    'which group you mean — paste the full path from column B instead.'
   ];
+  if (anyAmbiguous) {
+    refNotes.push('', 'This database HAS repeated group names. Check column A for duplicates.');
+  }
   var maxLen = Math.max(groupNames.length, secLabels.length, refNotes.length);
   for (var i = 0; i < maxLen; i++) {
-    refRows.push([groupNames[i] || '', secLabels[i] || '', refNotes[i] || '']);
+    refRows.push([groupNames[i] || '', groupPaths[i] || '', secLabels[i] || '', refNotes[i] || '']);
   }
   var wsRef = XLSX.utils.aoa_to_sheet(refRows);
-  wsRef['!cols'] = [{ wch: 32 }, { wch: 24 }, { wch: 72 }];
+  wsRef['!cols'] = [{ wch: 32 }, { wch: 46 }, { wch: 24 }, { wch: 74 }];
   XLSX.utils.book_append_sheet(wb, wsRef, 'Valid Options');
 
   var dbName = document.getElementById('dbBadge').textContent || 'UserImport';
@@ -1084,6 +1218,46 @@ function renderPreview() {
 }
 
 // ── Fix Errors panel ──────────────────────────────────────────────────────────
+
+/** One group picker line: a dropdown plus a button to take the line away.
+ *  Options are labelled by trail wherever the bare name is shared, so the list
+ *  never shows the same text twice. */
+function fixGroupRowHtml(selectedId) {
+  return '<div class="flex items-center gap-1.5">'
+    + '<select class="fix-grp text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white min-w-[14rem] max-w-[22rem] focus:outline-none focus:ring-2 focus:ring-blue-400">'
+    +   '<option value="">— no group —</option>'
+    +   GROUPS.map(function (g) {
+          return '<option value="' + g.id + '"' + (g.id === selectedId ? ' selected' : '') + '>' + esc(g.label) + '</option>';
+        }).join('')
+    + '</select>'
+    + '<button type="button" onclick="removeFixGroupRow(this)" title="Remove this group" '
+    +   'class="w-6 h-6 shrink-0 inline-flex items-center justify-center rounded-lg border border-slate-200 text-slate-400 hover:text-red-600 hover:border-red-300 transition-colors">'
+    +   '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M6 18L18 6M6 6l12 12"/></svg>'
+    + '</button>'
+    + '</div>';
+}
+
+/** Append a blank picker. The DOM is touched directly rather than re-rendering
+ *  the panel, which would discard every unconfirmed pick in the other rows. */
+function addFixGroupRow(rowNum) {
+  var wrap = document.getElementById('fixGrpWrap_' + rowNum);
+  if (!wrap) return;
+  wrap.insertAdjacentHTML('beforeend', fixGroupRowHtml(''));
+  var added = wrap.lastElementChild.querySelector('select.fix-grp');
+  if (added) added.focus();
+}
+
+/** Drop a picker line, keeping one blank line so the row never loses its
+ *  controls entirely and can still be set back to company level. */
+function removeFixGroupRow(btn) {
+  var line = btn.parentElement;
+  var wrap = line.parentElement;
+  line.remove();
+  if (wrap.querySelectorAll('select.fix-grp').length === 0) {
+    wrap.insertAdjacentHTML('beforeend', fixGroupRowHtml(''));
+  }
+}
+
 function renderFixErrors() {
   var errored = parsedRows.filter(function (r) { return r.errors.length > 0 && r.status !== 'done'; });
   var section = document.getElementById('fixErrorsSection');
@@ -1110,13 +1284,15 @@ function renderFixErrors() {
         }).join('')
       + '</select>';
 
-    // Multi-select rather than a dropdown: a user can sit in any number of
-    // groups, and selecting none is the "company level only" case.
-    var grpSel = '<select multiple size="4" id="fixGrp_' + r.rowNum + '" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white min-w-[12rem] focus:outline-none focus:ring-2 focus:ring-blue-400">'
-      + GROUPS.map(function (g) {
-          return '<option value="' + g.id + '"' + (r.groupIds.indexOf(g.id) !== -1 ? ' selected' : '') + '>' + esc(g.name) + '</option>';
-        }).join('')
-      + '</select>';
+    // One dropdown per group, added and removed on demand. A multi-select was
+    // tried first: it needs ctrl-click, and one stray plain click wiped every
+    // pick in the row. Leaving a single blank line is the company-level case.
+    var grpSel = '<div id="fixGrpWrap_' + r.rowNum + '" class="flex flex-col gap-1.5">'
+      +   (r.groupIds.length > 0 ? r.groupIds.map(fixGroupRowHtml).join('') : fixGroupRowHtml(''))
+      + '</div>'
+      + '<button type="button" onclick="addFixGroupRow(' + r.rowNum + ')" class="mt-1 self-start inline-flex items-center gap-1 px-2 py-1 rounded-lg border border-dashed border-slate-300 text-slate-500 text-xs font-medium hover:border-blue-400 hover:text-blue-600 transition-colors">'
+      +   '<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 5v14M5 12h14"/></svg>Add group'
+      + '</button>';
 
     var drvSel = r.hasDrv
       ? '<select id="fixDrv_' + r.rowNum + '" class="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">'
@@ -1135,6 +1311,9 @@ function renderFixErrors() {
       +   (r.hasDrv ? '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Is Driver</span>' + drvSel + '</div>' : '')
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Security Level</span>' + secSel + '</div>'
       +   '<div class="flex flex-col gap-1"><span class="text-xs text-slate-400">Groups <span class="text-slate-300">(none = company level)</span></span>' + grpSel + '</div>'
+      +   (findGroupConflicts(r.groupIds).length > 0
+            ? '<button onclick="keepParentOnly(' + r.rowNum + ')" title="Removes the child group. The parent already grants access to it, so access is unchanged." class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-300 text-slate-600 text-xs font-semibold hover:bg-slate-50 transition-colors">Keep parent only</button>'
+            : '')
       +   '<button onclick="confirmFix(' + r.rowNum + ')" class="self-end inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-semibold hover:bg-blue-700 transition-colors">'
       +     '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>Confirm'
       +   '</button>'
@@ -1148,11 +1327,10 @@ function confirmFix(rowNum) {
   if (!r) return;
 
   var secEl = document.getElementById('fixSec_' + rowNum);
-  var grpEl = document.getElementById('fixGrp_' + rowNum);
   var drvEl = document.getElementById('fixDrv_' + rowNum);
 
   var newSecId  = secEl ? secEl.value : r.secId;
-  var newGrpIds = readMultiSelect(grpEl);
+  var newGrpIds = readFixGroups(rowNum);
 
   var matchedSec = SECURITY_LEVELS.find(function (s) { return s.id === newSecId; });
 
@@ -1160,7 +1338,10 @@ function confirmFix(rowNum) {
   r.secLabel = matchedSec ? matchedSec.label : r.secLabel;
   if (newGrpIds) applyGroupIds(r, newGrpIds);
   if (drvEl) { r.isDriver = drvEl.value === 'yes'; r.isDriverInvalid = false; }
-  r.errors   = [];
+  // Re-check rather than blanket-clear: a parent/child pair picked here would
+  // otherwise sail through and be rejected by the API mid-import.
+  r.errors   = findGroupConflicts(r.groupIds);
+  if (r.errors.length > 0) { renderPreview(); return; }
 
   var rowEl = document.getElementById('fixRow_' + rowNum);
   if (rowEl) {
@@ -1172,13 +1353,21 @@ function confirmFix(rowNum) {
   }
 }
 
+/** Resolve a hierarchy clash by dropping the redundant descendant group. */
+function keepParentOnly(rowNum) {
+  var r = parsedRows.find(function (p) { return p.rowNum === rowNum; });
+  if (!r) return;
+  applyGroupIds(r, collapseRedundantGroups(r.groupIds));
+  r.errors = findGroupConflicts(r.groupIds);
+  renderPreview();
+}
+
 function confirmAllFixes() {
   // Snapshot all values before any DOM changes
   var fixes = parsedRows.filter(function (r) { return r.errors.length > 0; }).map(function (r) {
     var secEl = document.getElementById('fixSec_' + r.rowNum);
-    var grpEl = document.getElementById('fixGrp_' + r.rowNum);
     var drvEl = document.getElementById('fixDrv_' + r.rowNum);
-    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVals: readMultiSelect(grpEl), drvVal: drvEl ? drvEl.value : null };
+    return { rowNum: r.rowNum, secVal: secEl ? secEl.value : null, grpVals: readFixGroups(r.rowNum), drvVal: drvEl ? drvEl.value : null };
   });
   fixes.forEach(function (fix) {
     var r = parsedRows.find(function (p) { return p.rowNum === fix.rowNum; });
@@ -1189,7 +1378,7 @@ function confirmAllFixes() {
     }
     if (fix.grpVals !== null) applyGroupIds(r, fix.grpVals);
     if (fix.drvVal !== null) { r.isDriver = fix.drvVal === 'yes'; r.isDriverInvalid = false; }
-    r.errors = [];
+    r.errors = findGroupConflicts(r.groupIds);
   });
   renderPreview();
 }
@@ -1262,25 +1451,101 @@ function importUsers() {
   // Heartbeat — pings the API every 10s to keep the session alive during long imports
   var _heartbeat = setInterval(function() {
     trackApiCall();
+    chargeCalls(1);
     _api.call('GetVersion', {}, function() {}, function() {});
   }, 10000);
 
   var completed = 0;
-  var BATCH = 10;
 
-  // 10 users per batch = 10 API calls. At 250 calls/min limit → max 25 batches/min → 1 batch per 2.5s.
-  var BATCH_DELAY = 2500;
-  document.getElementById('importStatus').textContent = 'Pacing: 1 batch of 10 every 2.5s (~4 users/sec)';
+  // ── Adaptive pacing ─────────────────────────────────────────────────────────
+  // How long a user takes to write varies hugely by database, so batch size is
+  // measured rather than assumed. Each batch is timed, the cost per user is
+  // taken from it, and the next batch is sized to land near TARGET_BATCH_MS.
+  // A fixed size was tried first and was wrong in both directions: too large on
+  // a slow database (minutes of dead progress bar) and needlessly small on a
+  // fast one.
+  var MIN_BATCH    = 1;
+  var MAX_BATCH    = 50;
+  var START_BATCH  = 10;
+  // A ceiling, not a target. On a slow database the wall time is set by the
+  // server's per-user cost, so shrinking batches there buys nothing and only
+  // adds round trips — the size is grown while batches succeed and pulled back
+  // only when one runs past this, which bounds both the dead time on the
+  // progress bar and how much work a single failed batch puts at risk.
+  var MAX_BATCH_MS = 45000;
+  var batchSize    = START_BATCH;
+  var msPerUser    = null;   // null until the first batch has been timed
+
+  // Rate budget. A multiCall of N is charged as N here, which is the safe
+  // reading — if MyGeotab in fact charges it as one request we have only ever
+  // been slower than necessary, never throttled. Verify before relaxing this.
+  var RATE_LIMIT_PER_MIN = 250;
+  // Worst case a user costs two calls: the Add, then the Set that triggers the
+  // password prompt. Reserving for one was a real breach — a simulated fast
+  // database peaked at 260 calls in a 60s window against a limit of 250.
+  var CALLS_PER_USER = 2;
+  var _callTimes = [];
+
+  function chargeCalls(n) {
+    var now = Date.now();
+    for (var i = 0; i < n; i++) _callTimes.push(now);
+  }
+
+  /** Milliseconds to hold off before charging n more calls, so the rolling
+   *  60-second window never exceeds the limit. Zero whenever there is room. */
+  function rateDelayFor(n) {
+    var now = Date.now();
+    while (_callTimes.length > 0 && now - _callTimes[0] > 60000) _callTimes.shift();
+    var over = _callTimes.length + n - RATE_LIMIT_PER_MIN;
+    if (over <= 0) return 0;
+    var oldest = _callTimes[Math.min(over - 1, _callTimes.length - 1)];
+    return Math.max(0, 60000 - (now - oldest) + 50);
+  }
+
+  /** Resize from the cost per user just observed. Grow while batches come back
+   *  clean and inside the ceiling, halve whenever one is rejected outright. */
+  function retuneBatch(users, elapsedMs, failed) {
+    if (failed) {
+      batchSize = Math.max(MIN_BATCH, Math.floor(batchSize / 2));
+      return;
+    }
+    if (users <= 0 || elapsedMs <= 0) return;
+    var observed = elapsedMs / users;
+    // Smooth across batches so one blip does not dominate.
+    msPerUser = msPerUser === null ? observed : (msPerUser * 0.6 + observed * 0.4);
+
+    var ceiling = Math.max(MIN_BATCH, Math.floor(MAX_BATCH_MS / msPerUser));
+    var want = elapsedMs > MAX_BATCH_MS
+      ? ceiling                                  // overran — pull back to fit
+      : Math.min(ceiling, batchSize * 2);        // healthy — double, up to the ceiling
+    batchSize = Math.max(MIN_BATCH, Math.min(MAX_BATCH, want));
+  }
+
+  var _importStart = Date.now();
+
+  function updateStatus() {
+    var el = document.getElementById('importStatus');
+    if (!el) return;
+    if (msPerUser === null) {
+      el.textContent = 'Measuring — first batch of ' + batchSize + '…';
+      return;
+    }
+    var elapsedS = (Date.now() - _importStart) / 1000;
+    var rate     = elapsedS > 0 ? (completed / elapsedS) : 0;
+    el.textContent = rate.toFixed(rate < 1 ? 2 : 1) + ' users/sec measured · '
+      + Math.round(msPerUser) + ' ms per user · next batch ' + batchSize;
+  }
 
   function updateProgress() {
     var total = toImport.length;
     var pct   = total > 0 ? Math.round(completed / total * 100) : 0;
     // Animate bar toward the next batch's percentage so it glides continuously
-    var nextCompleted = Math.min(completed + BATCH, total);
+    var nextCompleted = Math.min(completed + batchSize, total);
     var nextPct = total > 0 ? Math.round(nextCompleted / total * 100) : 0;
     document.getElementById('progressLabel').textContent = completed + ' / ' + total + ' processed';
     document.getElementById('progressPct').textContent   = pct + '%';
     document.getElementById('progressBar').style.width   = nextPct + '%';
+    updateStatus();
   }
 
   function saveCheckpoint(offset) {
@@ -1296,7 +1561,7 @@ function importUsers() {
   }
 
   function nextBatch(offset) {
-    var chunk = toImport.slice(offset, offset + BATCH);
+    var chunk = toImport.slice(offset, offset + batchSize);
     if (chunk.length === 0) { finish(); return; }
 
     saveCheckpoint(offset);
@@ -1305,7 +1570,12 @@ function importUsers() {
       return ['Add', { typeName: 'User', entity: buildEntity(r) }];
     });
 
+    // Timed end to end, Sets included, because both halves are what a user
+    // actually costs and the next batch is sized from that figure.
+    var batchStart = Date.now();
+
     trackApiCall();
+    chargeCalls(calls.length);
     _api.multiCall(calls, function (responses) {
       console.log('[UserImport] multiCall responses:', JSON.stringify(responses));
       var setQueue = [];
@@ -1334,7 +1604,16 @@ function importUsers() {
       updateProgress();
 
       function advance() {
-        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
+        var elapsed = Date.now() - batchStart;
+        console.log('[UserImport] batch of ' + chunk.length + ' took ' + elapsed +
+                    'ms (' + Math.round(elapsed / chunk.length) + 'ms/user)');
+        retuneBatch(chunk.length, elapsed, false);
+        updateStatus();
+        // Wait only as long as the rate budget actually demands, rather than a
+        // flat delay that idled ~96% of the allowance on the old fixed pacing.
+        var wait = rateDelayFor(batchSize * CALLS_PER_USER);
+        if (wait > 0) console.log('[UserImport] rate budget: holding ' + wait + 'ms');
+        setTimeout(function() { nextBatch(offset + chunk.length); }, wait);
       }
 
       function sendSets() {
@@ -1347,6 +1626,7 @@ function importUsers() {
           return ['Set', { typeName: 'User', entity: e }];
         });
         trackApiCall();
+        chargeCalls(setCalls.length);
         _api.multiCall(setCalls, function () { advance(); }, function (err) {
           console.warn('[UserImport] Set failed:', err);
           advance();
@@ -1357,11 +1637,14 @@ function importUsers() {
 
     }, function (err) {
       console.warn('[UserImport] Whole batch rejected, falling back:', JSON.stringify(err));
-      // Whole batch rejected — fall back to per-row calls for error detail
+      // Whole batch rejected — fall back to per-row calls for error detail.
+      // The failure also halves the batch size, so a database that cannot cope
+      // with the current size is backed away from rather than hammered.
+      retuneBatch(chunk.length, Date.now() - batchStart, true);
       individualFallback(chunk, function () {
         completed += chunk.length;
         updateProgress();
-        setTimeout(function() { nextBatch(offset + BATCH); }, BATCH_DELAY);
+        setTimeout(function() { nextBatch(offset + chunk.length); }, rateDelayFor(batchSize * CALLS_PER_USER));
       });
     });
   }
@@ -1373,6 +1656,7 @@ function importUsers() {
       var r = chunk[idx++];
       var entity = buildEntity(r);
       trackApiCall();
+      chargeCalls(1);
       console.log('[UserImport] Individual Add for', r.email, JSON.stringify(entity));
       _api.call('Add', { typeName: 'User', entity: entity }, function (userId) {
         r.status = 'done';
@@ -1384,6 +1668,7 @@ function importUsers() {
           delete e.keys;
           e.id = userId;
           trackApiCall();
+          chargeCalls(1);
           _api.call('Set', { typeName: 'User', entity: e },
             function () { next(); },
             function (err) { console.warn('[UserImport] Set failed for', r.email, err); next(); }
@@ -1420,7 +1705,16 @@ function importUsers() {
     var dupes     = parsedRows.filter(function (r) { return r.status === 'duplicate'; }).length;
     var failed    = parsedRows.filter(function (r) { return r.status === 'error';     }).length;
 
-    document.getElementById('importStatus').textContent = '';
+    // Report what the run actually achieved. The old status line quoted a
+    // hardcoded "~4 users/sec" that was never measured against anything.
+    var totalS = (Date.now() - _importStart) / 1000;
+    var rate   = totalS > 0 ? completed / totalS : 0;
+    console.log('[UserImport] ' + completed + ' users in ' + totalS.toFixed(1) + 's = '
+                + rate.toFixed(2) + ' users/sec, ' + _apiCallCount + ' API calls');
+    document.getElementById('importStatus').textContent = completed > 0
+      ? completed + ' users in ' + totalS.toFixed(1) + 's · ' + rate.toFixed(rate < 1 ? 2 : 1)
+        + ' users/sec · ' + _apiCallCount + ' API calls'
+      : '';
 
     var remaining = parsedRows.filter(function (r) { return r.errors.length === 0 && r.status === 'pending'; }).length;
     document.getElementById('btnImport').disabled = remaining === 0;
